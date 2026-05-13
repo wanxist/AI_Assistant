@@ -27,10 +27,16 @@ async def chat(req: ChatRequest):
         stream=False,
     )
 
+    _provider_models = {
+        "deepseek": settings.deepseek_model,
+        "zhipu": settings.zhipu_model,
+        "openai": "gpt-4o-mini",
+        "mock": "mock",
+    }
     return ChatResponse(
         content=content,
         provider=req.provider,
-        model=req.model or settings.deepseek_model,
+        model=req.model or _provider_models.get(req.provider, settings.deepseek_model),
     )
 
 
@@ -41,7 +47,7 @@ async def chat_stream(req: ChatRequest):
     async def event_generator():
         from openai import OpenAI
 
-        provider = req.provider if req.provider in ("deepseek", "openai") else "deepseek"
+        provider = req.provider if req.provider in ("deepseek", "openai", "zhipu") else "deepseek"
 
         if provider == "deepseek":
             client = OpenAI(
@@ -49,6 +55,12 @@ async def chat_stream(req: ChatRequest):
                 base_url=settings.deepseek_base_url,
             )
             model = req.model or settings.deepseek_model
+        elif provider == "zhipu":
+            client = OpenAI(
+                api_key=settings.zhipu_api_key,
+                base_url=settings.zhipu_base_url,
+            )
+            model = req.model or settings.zhipu_model
         elif provider == "openai":
             client = OpenAI(api_key=settings.openai_api_key)
             model = req.model or "gpt-4o-mini"

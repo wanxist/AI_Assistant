@@ -9,6 +9,7 @@ from src.llm.base import BaseLLMProvider
 from src.llm.providers.deepseek import DeepSeekProvider
 from src.llm.providers.openai import OpenAIProvider
 from src.llm.providers.mock import MockProvider
+from src.llm.providers.zhipu import ZhipuAIProvider
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +17,10 @@ logger = logging.getLogger(__name__)
 DEEPSEEK = "deepseek"
 OPENAI = "openai"
 MOCK = "mock"
+ZHIPU = "zhipu"
 
 # Ordered list of providers to try when the primary fails
-DEFAULT_FALLBACK_CHAIN = [DEEPSEEK, OPENAI, MOCK]
+DEFAULT_FALLBACK_CHAIN = [DEEPSEEK, ZHIPU, OPENAI, MOCK]
 
 
 class LLMRouter:
@@ -115,6 +117,7 @@ def get_llm() -> LLMRouter:
     """Singleton LLM router with all providers registered."""
     router = LLMRouter()
     router.register(DEEPSEEK, DeepSeekProvider())
+    router.register(ZHIPU, ZhipuAIProvider())
     router.register(OPENAI, OpenAIProvider())
     router.register(MOCK, MockProvider())
     return router

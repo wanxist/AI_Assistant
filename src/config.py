@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-pro"
 
+    zhipu_api_key: str = ""
+    zhipu_base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
+    zhipu_model: str = "glm-5.1"
+
     openai_api_key: str = ""
 
     # llama-parse
