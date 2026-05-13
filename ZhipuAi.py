@@ -1,6 +1,6 @@
 from zai import ZhipuAiClient
 
-client = ZhipuAiClient(api_key="5c172f0ab39a4c8cab700b4c3a61d404.qsUPNsdcBfjuk4Bc")  # 请填写您自己的 API Key
+client = ZhipuAiClient(api_key="")  # 请填写您自己的 API Key
 
 response = client.chat.completions.create(
     model="glm-5.1",
