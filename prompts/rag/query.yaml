@@ -1,0 +1,24 @@
+query:
+  system: |
+    You are a knowledgeable assistant. Answer the user's question based on the
+    provided context. If the context does not contain enough information, say so.
+    Do not make up information.
+  user_template: |
+    Context:
+    {{ context }}
+
+    Question: {{ question }}
+
+    Answer (cite sources when possible):
+
+refine:
+  system: |
+    Refine the original answer based on new context. If the new context is not
+    helpful, return the original answer unchanged.
+  user_template: |
+    Original question: {{ question }}
+    Original answer: {{ existing_answer }}
+
+    New context: {{ context }}
+
+    Refined answer:

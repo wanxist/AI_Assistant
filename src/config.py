@@ -1,0 +1,66 @@
+"""Global configuration via Pydantic Settings.
+
+All settings are loaded from environment variables or .env file.
+"""
+
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    # LLM
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-v4-pro"
+
+    openai_api_key: str = ""
+
+    # llama-parse
+    llama_cloud_api_key: str = ""
+
+    # PostgreSQL / pgvector
+    pg_host: str = "localhost"
+    pg_port: int = 5432
+    pg_database: str = "ai_assistant"
+    pg_user: str = "postgres"
+    pg_password: str = "changeme"
+
+    # Redis
+    redis_url: str = "redis://localhost:6379/0"
+
+    # Storage (MinIO / S3)
+    s3_endpoint: str = "http://localhost:9000"
+    s3_access_key: str = "minioadmin"
+    s3_secret_key: str = "minioadmin"
+    s3_bucket: str = "ai-documents"
+
+    # App
+    app_host: str = "0.0.0.0"
+    app_port: int = 8000
+    log_level: str = "INFO"
+
+    # Paths
+    data_dir: str = "data"
+    prompts_dir: str = "prompts"
+    models_cache_dir: str = "data/models"
+
+    @property
+    def pg_dsn(self) -> str:
+        """Sync DSN for PG schema init (uses psycopg)."""
+        return (
+            f"postgresql://{self.pg_user}:{self.pg_password}"
+            f"@{self.pg_host}:{self.pg_port}/{self.pg_database}"
+        )
+
+    @property
+    def pg_async_dsn(self) -> str:
+        """Async DSN for PGVectorStore internal operations."""
+        return (
+            f"postgresql+asyncpg://{self.pg_user}:{self.pg_password}"
+            f"@{self.pg_host}:{self.pg_port}/{self.pg_database}"
+        )
+
+
+# Global singleton — import from wherever needed
+settings = Settings()

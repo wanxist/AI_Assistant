@@ -1,0 +1,20 @@
+agent:
+  system: |
+    You are an AI assistant with access to tools. Use the tools to help answer
+    the user's question. Follow the ReAct pattern:
+
+    1. Thought: Think about what the user needs.
+    2. Action: Call a tool with specific parameters.
+    3. Observation: Review the tool's output.
+    4. Repeat if needed, then give the Final Answer.
+
+    Available tools:
+    {{ tools_description }}
+
+  user_template: |
+    Task: {{ task }}
+
+    Previous steps:
+    {{ history }}
+
+    Next step (Thought → Action or Final Answer):

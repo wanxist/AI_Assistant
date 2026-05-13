@@ -1,0 +1,120 @@
+"""LLM Router — unified interface with provider selection, retry, and fallback."""
+
+import logging
+import time
+from functools import lru_cache
+
+from src.config import settings
+from src.llm.base import BaseLLMProvider
+from src.llm.providers.deepseek import DeepSeekProvider
+from src.llm.providers.openai import OpenAIProvider
+from src.llm.providers.mock import MockProvider
+
+logger = logging.getLogger(__name__)
+
+# Provider name constants
+DEEPSEEK = "deepseek"
+OPENAI = "openai"
+MOCK = "mock"
+
+# Ordered list of providers to try when the primary fails
+DEFAULT_FALLBACK_CHAIN = [DEEPSEEK, OPENAI, MOCK]
+
+
+class LLMRouter:
+    """Routes chat requests to the appropriate LLM provider.
+
+    Supports:
+    - Explicit provider selection
+    - Automatic retry with backoff
+    - Fallback chain when primary provider fails
+    """
+
+    def __init__(self):
+        self._providers: dict[str, BaseLLMProvider] = {}
+
+    def register(self, name: str, provider: BaseLLMProvider) -> None:
+        self._providers[name] = provider
+
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        provider: str = DEEPSEEK,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        stream: bool = False,
+        retries: int = 2,
+        backoff: float = 1.0,
+        fallback_chain: list[str] | None = None,
+    ) -> str:
+        """Send chat request with retry and fallback.
+
+        Args:
+            messages: Chat messages in OpenAI format.
+            provider: Primary provider name.
+            model: Model override (uses provider default if None).
+            temperature: Sampling temperature.
+            max_tokens: Max tokens in response.
+            stream: Whether to stream (collects and returns full text).
+            retries: Number of retry attempts per provider.
+            backoff: Base seconds between retries.
+            fallback_chain: Ordered backup providers if primary fails.
+                Defaults to [deepseek, openai, mock].
+
+        Returns:
+            Text response from the first successful provider.
+
+        Raises:
+            RuntimeError: If all providers in the chain fail.
+        """
+        chain = fallback_chain or DEFAULT_FALLBACK_CHAIN
+        # Ensure primary provider is first in chain
+        ordered = [provider] + [p for p in chain if p != provider]
+
+        last_error: Exception | None = None
+
+        for prov_name in ordered:
+            prov = self._providers.get(prov_name)
+            if prov is None or not prov.is_available():
+                logger.debug("Provider %s not available, skipping", prov_name)
+                continue
+
+            for attempt in range(retries + 1):
+                try:
+                    result = prov.chat(
+                        messages,
+                        model=model,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stream=stream,
+                    )
+                    return result
+                except Exception as exc:
+                    last_error = exc
+                    logger.warning(
+                        "Provider %s attempt %d/%d failed: %s",
+                        prov_name,
+                        attempt + 1,
+                        retries + 1,
+                        exc,
+                    )
+                    if attempt < retries:
+                        time.sleep(backoff * (attempt + 1))
+
+            logger.error("Provider %s exhausted all retries", prov_name)
+
+        raise RuntimeError(
+            f"All providers failed. Last error: {last_error}"
+        ) from last_error
+
+
+@lru_cache(maxsize=1)
+def get_llm() -> LLMRouter:
+    """Singleton LLM router with all providers registered."""
+    router = LLMRouter()
+    router.register(DEEPSEEK, DeepSeekProvider())
+    router.register(OPENAI, OpenAIProvider())
+    router.register(MOCK, MockProvider())
+    return router

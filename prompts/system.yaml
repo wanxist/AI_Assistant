@@ -1,0 +1,6 @@
+assistant:
+  system: |
+    You are a helpful AI assistant. Answer concisely and clearly.
+    Current date: {{ current_date }}
+  user_template: |
+    {{ query }}

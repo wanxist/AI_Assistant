@@ -1,0 +1,77 @@
+[project]
+name = "ai-assistant"
+version = "0.1.0"
+description = "AI Assistant with Document Parsing, RAG, and Agent capabilities"
+requires-python = ">=3.11"
+dependencies = [
+    # LLM — DeepSeek 通过 openai 兼容接口调用
+    "openai>=1.60",
+
+    # 文档解析
+    "pymupdf>=1.25",
+    "marker-pdf>=1.0",
+    "paddleocr>=2.9",
+    "paddlepaddle>=3.0",
+    "llama-parse>=0.5",
+    "python-docx>=1.1",
+    "python-pptx>=1.0",
+    "Pillow>=11.0",
+
+    # RAG + Agent 框架
+    "llama-index-core>=0.12",
+    "llama-index-vector-stores-postgres",
+    "llama-index-embeddings-huggingface",
+    "llama-index-postprocessor-flag-embedding-reranker",
+    "llama-index-llms-openai",
+    "llama-index-agent-openai",
+
+    # HuggingFace (加载 bge embedding)
+    "transformers>=4.45",
+    "torch>=2.4",
+    "sentence-transformers>=3.0",
+
+    # 向量库
+    "pgvector>=0.3",
+    "psycopg[binary]>=3.2",
+
+    # Web 框架
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-multipart>=0.0.12",
+
+    # 存储
+    "boto3>=1.35",
+
+    # 会话 & 缓存
+    "redis[hiredis]>=5.2",
+
+    # 基础工具
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6",
+    "httpx>=0.28",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+    "tiktoken>=0.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.28",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+    "chromadb>=0.5",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import pytest; import fastapi; import pydantic; import openai; print\\('All core deps OK'\\)\")",
+      "Bash(pip install *)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python -m ruff check src/)",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import llama_index; import chromadb; print\\('llama_index:', llama_index.__version__\\); print\\('chromadb:', chromadb.__version__\\)\")",
+      "Bash(sort -k6,7)",
+      "Bash(psql --version)"
+    ]
+  }
+}
