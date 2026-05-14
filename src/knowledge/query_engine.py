@@ -66,8 +66,15 @@ class QueryEngine:
                 "sources": [],
             }
 
-        # 2. Build context
+        # Filter low-relevance results — if all scores below threshold, skip LLM
         top_nodes = nodes[:top_k]
+        if top_nodes and (top_nodes[0].score or 0) <= 0.35:
+            return {
+                "answer": "知识库中没有找到相关信息。请先上传相关文档。",
+                "sources": [],
+            }
+
+        # 2. Build context
         context_parts = []
         sources = []
 
@@ -96,14 +103,8 @@ class QueryEngine:
         return {"answer": answer, "sources": sources}
 
     def _build_prompt(self, question: str, context: str) -> str:
-        return (
-            "你是一个知识库助手。请根据以下参考资料回答用户的问题。\n"
-            "如果参考资料不足以回答问题，请如实说明，不要编造信息。\n"
-            "回答时请引用资料来源（标注编号 [1]、[2] 等）。\n\n"
-            f"参考资料：\n{context}\n\n"
-            f"用户问题：{question}\n\n"
-            "回答："
-        )
+        from src.utils.prompt_loader import load_prompt
+        return load_prompt("rag/query", context=context, question=question)
 
 
 @lru_cache(maxsize=1)

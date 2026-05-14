@@ -1,34 +1,23 @@
 import logging
 
-from openai import OpenAI
-
 from src.config import settings
 from src.llm.base import BaseLLMProvider
 
 logger = logging.getLogger(__name__)
 
 
-class ZhipuAIProvider(BaseLLMProvider):
-    """ZhipuAI GLM provider via OpenAI-compatible API.
+class ZhipuProvider(BaseLLMProvider):
+    """Zhipu (智谱 GLM) provider via the zai SDK."""
 
-    Endpoint: https://open.bigmodel.cn/api/paas/v4/
-    Models: glm-5.1, glm-4-plus, glm-4-flash, etc.
-    """
-
-    def __init__(
-        self,
-        api_key: str | None = None,
-        base_url: str | None = None,
-        default_model: str | None = None,
-    ):
+    def __init__(self, api_key: str | None = None, default_model: str | None = None):
         self.api_key = api_key or settings.zhipu_api_key
-        self.base_url = base_url or settings.zhipu_base_url
         self.default_model = default_model or settings.zhipu_model
-        self._client: OpenAI | None = None
+        self._client = None
 
-    def _ensure_client(self) -> OpenAI:
+    def _ensure_client(self):
         if self._client is None:
-            self._client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+            from zai import ZhipuAiClient
+            self._client = ZhipuAiClient(api_key=self.api_key)
         return self._client
 
     def is_available(self) -> bool:

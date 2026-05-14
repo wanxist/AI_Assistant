@@ -12,7 +12,7 @@ class ChatRequest(BaseModel):
     model: str | None = None
     temperature: float = 0.0
     max_tokens: int = 4096
-    stream: bool = False
+    session_id: str | None = None
 
 
 class ChatResponse(BaseModel):

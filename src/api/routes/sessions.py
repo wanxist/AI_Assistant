@@ -1,161 +1,107 @@
-"""Session management API — CRUD for chat sessions.
-
-Stores sessions in Redis (via SessionCache), falling back to in-memory
-when Redis is unavailable.
-"""
+"""Session management — PG-backed CRUD."""
 
 import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 
-from src.api.schemas import (
-    CreateSessionRequest,
-    SessionInfo,
-    SessionDetail,
-    SessionListResponse,
-)
-from src.storage.cache import get_cache
+from src.api.routes.auth import get_current_user
+from src.config import settings
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 logger = logging.getLogger(__name__)
 
-# In-memory fallback when Redis is not available
-_memory_store: dict[str, dict] = {}
 
-
-def _redis_available() -> bool:
-    try:
-        cache = get_cache()
-        cache.set("__ping__", "t", "1")
-        return cache.get("__ping__", "t") == "1"
-    except Exception:
-        return False
-
-
-@router.post("", response_model=SessionDetail, status_code=201)
-async def create_session(req: CreateSessionRequest):
-    session_id = uuid.uuid4().hex[:16]
-    title = req.title or "新对话"
-    created_at = datetime.now(timezone.utc).isoformat()
-
-    if _redis_available():
-        cache = get_cache()
-        cache.set(session_id, "title", title)
-        cache.set(session_id, "created_at", created_at)
-        # Track session IDs in a set
-        try:
-            from src.storage.cache import _get_redis
-            r = _get_redis()
-            client = r.Redis.from_url("redis://localhost:6379/0", decode_responses=True, socket_connect_timeout=2)
-            client.sadd("sessions:all", session_id)
-        except Exception:
-            pass
-    else:
-        _memory_store[session_id] = {
-            "title": title,
-            "created_at": created_at,
-            "messages": [],
-        }
-
-    return SessionDetail(
-        id=session_id,
-        title=title,
-        message_count=0,
-        created_at=created_at,
-        messages=[],
+def _pg():
+    import psycopg
+    return psycopg.connect(
+        host=settings.pg_host, port=settings.pg_port,
+        dbname=settings.pg_database, user=settings.pg_user,
+        password=settings.pg_password, connect_timeout=5,
     )
 
 
-@router.get("", response_model=SessionListResponse)
-async def list_sessions():
+@router.post("")
+async def create_session(user: dict = Depends(get_current_user)):
+    sid = uuid.uuid4().hex[:16]
+    conn = _pg()
+    conn.execute(
+        "INSERT INTO t_session_info (id, title, user_id) VALUES (%s,%s,%s)",
+        [sid, "新对话", user["user_id"]],
+    )
+    conn.commit()
+    conn.close()
+    return {"id": sid, "title": "新对话", "messages": []}
+
+
+@router.get("")
+async def list_sessions(user: dict = Depends(get_current_user)):
+    conn = _pg()
+    rows = conn.execute(
+        """SELECT s.id, s.title, s.created_at, s.updated_at,
+                  (SELECT count(*) FROM t_session_message m WHERE m.session_id=s.id) as msg_count
+           FROM t_session_info s WHERE s.user_id=%s ORDER BY s.updated_at DESC""",
+        [user["user_id"]],
+    ).fetchall()
+    conn.close()
     sessions = []
-
-    if _redis_available():
-        try:
-            from src.storage.cache import _get_redis
-            r = _get_redis()
-            client = r.Redis.from_url("redis://localhost:6379/0", decode_responses=True, socket_connect_timeout=2)
-            ids = client.smembers("sessions:all") or set()
-        except Exception:
-            ids = set()
-
-        cache = get_cache()
-        for sid in ids:
-            title = cache.get(sid, "title") or "未命名"
-            created_at = cache.get(sid, "created_at") or ""
-            count = len(cache.get_messages(sid))
-            sessions.append(SessionInfo(
-                id=sid, title=title, message_count=count, created_at=created_at,
-            ))
-    else:
-        for sid, data in _memory_store.items():
-            sessions.append(SessionInfo(
-                id=sid,
-                title=data.get("title", ""),
-                message_count=len(data.get("messages", [])),
-                created_at=data.get("created_at", ""),
-            ))
-
-    sessions.sort(key=lambda s: s.created_at, reverse=True)
-    return SessionListResponse(sessions=sessions, total=len(sessions))
+    for r in rows:
+        sessions.append({
+            "id": r[0], "title": r[1], "created_at": r[2].isoformat(),
+            "updated_at": r[3].isoformat() if r[3] else "", "message_count": r[4],
+        })
+    return {"sessions": sessions, "total": len(sessions)}
 
 
-@router.get("/{session_id}", response_model=SessionDetail)
-async def get_session(session_id: str):
-    if _redis_available():
-        cache = get_cache()
-        title = cache.get(session_id, "title")
-        if title is None:
-            raise HTTPException(404, "会话不存在")
-        messages = cache.get_messages(session_id)
-        created_at = cache.get(session_id, "created_at") or ""
-        return SessionDetail(
-            id=session_id,
-            title=title,
-            message_count=len(messages),
-            created_at=created_at,
-            messages=messages,
-        )
-    else:
-        data = _memory_store.get(session_id)
-        if not data:
-            raise HTTPException(404, "会话不存在")
-        return SessionDetail(
-            id=session_id,
-            title=data["title"],
-            message_count=len(data["messages"]),
-            created_at=data["created_at"],
-            messages=data["messages"],
-        )
+@router.get("/{sid}")
+async def get_session(sid: str, user: dict = Depends(get_current_user)):
+    conn = _pg()
+    row = conn.execute(
+        "SELECT id, title, user_id FROM t_session_info WHERE id=%s", [sid]
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "会话不存在")
+    if row[2] != user["user_id"]:
+        conn.close()
+        raise HTTPException(403, "无权访问")
+    msgs = conn.execute(
+        "SELECT role, content FROM t_session_message WHERE session_id=%s ORDER BY id",
+        [sid],
+    ).fetchall()
+    conn.close()
+    return {
+        "id": row[0], "title": row[1],
+        "messages": [{"role": r[0], "content": r[1]} for r in msgs],
+    }
 
 
-@router.post("/{session_id}/messages", status_code=201)
-async def append_message(session_id: str, role: str = "user", content: str = ""):
-    """Append a message to a session. Used by the frontend to sync messages."""
-    if _redis_available():
-        cache = get_cache()
-        cache.append_message(session_id, role, content)
-    else:
-        if session_id not in _memory_store:
-            _memory_store[session_id] = {"title": "新对话", "created_at": "", "messages": []}
-        _memory_store[session_id]["messages"].append({"role": role, "content": content})
+@router.patch("/{sid}")
+async def rename_session(sid: str, title: str, user: dict = Depends(get_current_user)):
+    conn = _pg()
+    result = conn.execute(
+        "UPDATE t_session_info SET title=%s, updated_at=NOW() WHERE id=%s AND user_id=%s",
+        [title[:100], sid, user["user_id"]],
+    )
+    conn.commit()
+    if result.rowcount == 0:
+        conn.close()
+        raise HTTPException(404, "会话不存在")
+    conn.close()
     return {"status": "ok"}
 
 
-@router.delete("/{session_id}", status_code=200)
-async def delete_session(session_id: str):
-    if _redis_available():
-        cache = get_cache()
-        cache.clear(session_id)
-        try:
-            from src.storage.cache import _get_redis
-            r = _get_redis()
-            client = r.Redis.from_url("redis://localhost:6379/0", decode_responses=True, socket_connect_timeout=2)
-            client.srem("sessions:all", session_id)
-        except Exception:
-            pass
-    else:
-        _memory_store.pop(session_id, None)
-    return {"status": "deleted", "session_id": session_id}
+@router.delete("/{sid}")
+async def delete_session(sid: str, user: dict = Depends(get_current_user)):
+    conn = _pg()
+    result = conn.execute(
+        "DELETE FROM t_session_info WHERE id=%s AND user_id=%s",
+        [sid, user["user_id"]],
+    )
+    conn.commit()
+    if result.rowcount == 0:
+        conn.close()
+        raise HTTPException(404, "会话不存在")
+    conn.close()
+    return {"status": "deleted"}

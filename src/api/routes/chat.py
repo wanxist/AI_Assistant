@@ -1,10 +1,8 @@
-"""POST /chat, /chat/stream — LLM conversation endpoints."""
+"""POST /chat — LLM conversation with auto session persistence."""
 
-import json
 import logging
 
 from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
 
 from src.api.schemas import ChatRequest, ChatResponse
 from src.config import settings
@@ -14,88 +12,68 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
 
 
+def _pg():
+    import psycopg
+    return psycopg.connect(
+        host=settings.pg_host, port=settings.pg_port,
+        dbname=settings.pg_database, user=settings.pg_user,
+        password=settings.pg_password, connect_timeout=5,
+    )
+
+
 @router.post("", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     llm = get_llm()
 
+    # Inject system prompt from YAML template
+    from src.utils.prompt_loader import load_system_prompt
+    system_prompt = load_system_prompt("assistant")
+    messages = req.messages
+    if system_prompt and (not messages or messages[0].get("role") != "system"):
+        messages = [{"role": "system", "content": system_prompt}] + list(messages)
+
     content = llm.chat(
-        messages=req.messages,
+        messages=messages,
         provider=req.provider,
         model=req.model,
         temperature=req.temperature,
         max_tokens=req.max_tokens,
-        stream=False,
     )
 
-    _provider_models = {
-        "deepseek": settings.deepseek_model,
-        "zhipu": settings.zhipu_model,
-        "openai": "gpt-4o-mini",
-        "mock": "mock",
-    }
+    # Auto-persist messages if session_id provided
+    if req.session_id and req.messages:
+        try:
+            conn = _pg()
+            # Save user message (last one in the array)
+            user_msg = req.messages[-1]["content"]
+            conn.execute(
+                "INSERT INTO t_session_message (session_id, role, content) VALUES (%s,%s,%s)",
+                [req.session_id, "user", user_msg[:10000]],
+            )
+            # Save assistant message
+            conn.execute(
+                "INSERT INTO t_session_message (session_id, role, content) VALUES (%s,%s,%s)",
+                [req.session_id, "assistant", content[:10000]],
+            )
+            # Auto-name: use first 10 chars of the first USER message
+            user_msgs = [m["content"] for m in req.messages if m.get("role") == "user"]
+            first_text = user_msgs[0].strip().replace("\n", " ") if user_msgs else ""
+            title = first_text[:10] if first_text else "新对话"
+            conn.execute(
+                "UPDATE t_session_info SET title=%s, updated_at=NOW() WHERE id=%s AND title='新对话'",
+                [title, req.session_id],
+            )
+            conn.execute(
+                "UPDATE t_session_info SET updated_at=NOW() WHERE id=%s",
+                [req.session_id],
+            )
+            conn.commit()
+            conn.close()
+        except Exception as exc:
+            logger.warning("Failed to persist chat message: %s", exc)
+
     return ChatResponse(
         content=content,
         provider=req.provider,
-        model=req.model or _provider_models.get(req.provider, settings.deepseek_model),
-    )
-
-
-@router.post("/stream")
-async def chat_stream(req: ChatRequest):
-    """SSE streaming chat — returns text/event-stream for typewriter effect."""
-
-    async def event_generator():
-        from openai import OpenAI
-
-        provider = req.provider if req.provider in ("deepseek", "openai", "zhipu") else "deepseek"
-
-        if provider == "deepseek":
-            client = OpenAI(
-                api_key=settings.deepseek_api_key,
-                base_url=settings.deepseek_base_url,
-            )
-            model = req.model or settings.deepseek_model
-        elif provider == "zhipu":
-            client = OpenAI(
-                api_key=settings.zhipu_api_key,
-                base_url=settings.zhipu_base_url,
-            )
-            model = req.model or settings.zhipu_model
-        elif provider == "openai":
-            client = OpenAI(api_key=settings.openai_api_key)
-            model = req.model or "gpt-4o-mini"
-        else:
-            yield f"data: {json.dumps({'error': 'unsupported provider'})}\n\n"
-            return
-
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=req.messages,
-                temperature=req.temperature,
-                max_tokens=req.max_tokens,
-                stream=False,  # DeepSeek V4 Pro does not support streaming
-            )
-
-            content = response.choices[0].message.content or ""
-            # Emulate SSE streaming: send content in ~20-char chunks for typewriter effect
-            chunk_size = 20
-            for i in range(0, len(content), chunk_size):
-                chunk = content[i:i + chunk_size]
-                yield f"data: {json.dumps({'content': chunk})}\n\n"
-
-            yield f"data: {json.dumps({'content': '', 'done': True})}\n\n"
-
-        except Exception as e:
-            logger.exception("Stream error")
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        model=req.model or settings.deepseek_model,
     )

@@ -1,24 +1,13 @@
-query:
-  system: |
-    You are a knowledgeable assistant. Answer the user's question based on the
-    provided context. If the context does not contain enough information, say so.
-    Do not make up information.
-  user_template: |
-    Context:
-    {{ context }}
+query: |
+  根据以下参考资料回答用户问题。
 
-    Question: {{ question }}
+  要求：
+  - 如果参考资料提供了足够信息，请准确回答并引用来源编号 [1]、[2] 等
+  - 如果参考资料不足以回答，请如实说明，不要强行编造
 
-    Answer (cite sources when possible):
+  参考资料：
+  {{ context }}
 
-refine:
-  system: |
-    Refine the original answer based on new context. If the new context is not
-    helpful, return the original answer unchanged.
-  user_template: |
-    Original question: {{ question }}
-    Original answer: {{ existing_answer }}
+  用户问题：{{ question }}
 
-    New context: {{ context }}
-
-    Refined answer:
+  回答：
