@@ -12,7 +12,8 @@ from src.config import settings
 logger = logging.getLogger(__name__)
 
 # Try local ModelScope path first, fall back to HuggingFace name
-_LOCAL_PATH = "data/models/BAAI/bge-large-zh-v1___5"
+_PROJECT_ROOT = __file__.rsplit("src", 1)[0]  # up to project root
+_LOCAL_PATH = os.path.join(_PROJECT_ROOT, "data", "models", "BAAI", "bge-large-zh-v1___5")
 import os
 EMBEDDING_MODEL = _LOCAL_PATH if os.path.isdir(_LOCAL_PATH) else "BAAI/bge-large-zh-v1.5"
 EMBEDDING_DIM = 1024

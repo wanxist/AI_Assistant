@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.middleware import LoggingMiddleware
-from src.api.routes import health, chat, upload, documents, delete_document, query, sessions, auth
+from src.api.routes import health, chat, chat_stream, upload, documents, delete_document, query, sessions, auth
 from src.observability.logging_config import setup_logging
 
 
@@ -34,6 +34,7 @@ app.add_middleware(LoggingMiddleware)
 # Routes
 app.include_router(health.router)
 app.include_router(chat.router)
+app.include_router(chat_stream.router)
 app.include_router(upload.router)
 app.include_router(documents.router)
 app.include_router(delete_document.router)

@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 import os as _os
-_RERANKER_LOCAL = "data/models/BAAI/bge-reranker-large"
+_PROJECT_ROOT = __file__.rsplit("src", 1)[0]
+_RERANKER_LOCAL = _os.path.join(_PROJECT_ROOT, "data", "models", "BAAI", "bge-reranker-large")
 _RERANKER_DEFAULT = "BAAI/bge-reranker-large"
 _RERANKER_MODEL = _RERANKER_LOCAL if _os.path.isdir(_RERANKER_LOCAL) else _RERANKER_DEFAULT
 
