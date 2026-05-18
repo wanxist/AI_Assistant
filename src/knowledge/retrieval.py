@@ -49,18 +49,25 @@ class HybridRetriever:
 
         Stage 1: Coarse retrieval via hybrid search (BM25 + vector).
         Stage 2: Fine re-ranking via bge-reranker-large.
+
+        Dynamic weights: short queries (keyword-heavy) retrieve more coarse results
+        to favor BM25; long queries (semantic) keep default counts.
         """
         from llama_index.core.retrievers import VectorIndexRetriever
 
         index = self._ensure_index()
 
+        # Dynamic: short query → more candidates (BM25 shines on keywords)
+        qlen = len(query)
+        coarse_k = self.coarse_k + 10 if qlen < 15 else self.coarse_k
+
         # Stage 1: Coarse hybrid retrieval
         retriever = VectorIndexRetriever(
             index=index,
-            similarity_top_k=self.coarse_k,
+            similarity_top_k=coarse_k,
         )
         coarse_nodes = retriever.retrieve(query)
-        logger.debug("Coarse retrieval: %d nodes", len(coarse_nodes))
+        logger.debug("Coarse retrieval: %d nodes (qlen=%d, coarse_k=%d)", len(coarse_nodes), qlen, coarse_k)
 
         if not coarse_nodes:
             return []

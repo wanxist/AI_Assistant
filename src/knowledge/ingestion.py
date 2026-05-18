@@ -42,6 +42,7 @@ def ingest_documents(
     docs: list[ParsedDocument],
     doc_id: str = "",
     filename: str = "",
+    extra_metadata: dict | None = None,
 ) -> int:
     """Ingest parsed documents into the vector store.
 
@@ -49,6 +50,7 @@ def ingest_documents(
         docs: List of ParsedDocument from the parsing layer.
         doc_id: Unique identifier for this document batch.
         filename: Original filename for metadata.
+        extra_metadata: Additional fields (summary, pages, etc.).
 
     Returns:
         Number of nodes ingested.
@@ -59,12 +61,14 @@ def ingest_documents(
         logger.warning("No documents to ingest")
         return 0
 
+    extra = extra_metadata or {}
     llama_docs = []
     for d in docs:
         metadata = {
             "doc_id": doc_id,
             "filename": filename,
             "parser_used": d.parser_used,
+            **extra,
             **d.metadata,
         }
         llama_docs.append(Document(text=d.content, metadata=metadata))

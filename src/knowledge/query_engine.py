@@ -37,19 +37,28 @@ class QueryEngine:
             self._retriever = get_retriever()
         return self._retriever
 
-    def query(self, question: str, top_k: int = 5) -> dict:
+    def query(self, question: str, top_k: int = 5, use_hyde: bool = True) -> dict:
         """Answer a question using RAG.
 
         Args:
             question: The user's question.
             top_k: Max number of source chunks to use.
+            use_hyde: Generate a hypothetical answer first to improve retrieval.
 
         Returns:
             {"answer": str, "sources": list[SourceInfo]}
         """
+        # HyDE: generate a hypothetical answer to bridge the query-document gap
+        search_query = question
+        if use_hyde:
+            hyde_text = self._generate_hypothetical(question)
+            if hyde_text:
+                search_query = hyde_text
+                logger.debug("HyDE query: %s", hyde_text[:100])
+
         # 1. Retrieve
         try:
-            nodes = self.retriever.retrieve(question)
+            nodes = self.retriever.retrieve(search_query)
         except (ImportError, ModuleNotFoundError) as exc:
             logger.warning("Vector store not available: %s", exc)
             return {
@@ -101,6 +110,21 @@ class QueryEngine:
         )
 
         return {"answer": answer, "sources": sources}
+
+    def _generate_hypothetical(self, question: str) -> str | None:
+        """HyDE: ask LLM to write a hypothetical answer, improve retrieval recall."""
+        try:
+            llm = get_llm()
+            return llm.chat(
+                messages=[{"role": "user", "content": (
+                    "请用一段话（50-100字）回答以下问题。不需要真实准确，只需要写出一个"
+                    "看起来像答案的段落，用于帮助搜索引擎找到相关文档。\n问题：" + question
+                )}],
+                temperature=0.3,
+                max_tokens=200,
+            )
+        except Exception:
+            return None
 
     def _build_prompt(self, question: str, context: str) -> str:
         from src.utils.prompt_loader import load_prompt

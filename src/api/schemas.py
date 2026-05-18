@@ -42,7 +42,14 @@ class DocumentInfo(BaseModel):
     status: str
     parser_used: str
     chunks_count: int | None = None
-    uploaded_at: str
+    file_size: str = ""
+    pages: int | None = None
+    uploaded_at: str = ""
+    summary: str = ""
+
+
+class DocumentDetail(DocumentInfo):
+    chunks: list[str] = []
 
 
 class DocumentListResponse(BaseModel):

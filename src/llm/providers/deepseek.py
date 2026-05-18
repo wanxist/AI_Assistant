@@ -46,6 +46,7 @@ class DeepSeekProvider(BaseLLMProvider):
             temperature=temperature,
             max_tokens=max_tokens,
             stream=stream,
+            extra_body={"thinking": {"type": "disabled"}},
         )
 
         if stream:
