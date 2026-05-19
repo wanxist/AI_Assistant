@@ -13,6 +13,15 @@ from src.config import settings
 router = APIRouter(prefix="/documents", tags=["documents"])
 logger = logging.getLogger(__name__)
 
+MD5_STORE = Path(settings.data_dir) / "md5_store.json"
+
+
+def _load_md5_store() -> dict:
+    import json
+    if MD5_STORE.exists():
+        return json.loads(MD5_STORE.read_text())
+    return {}
+
 
 @router.get("", response_model=DocumentListResponse)
 async def list_documents():
@@ -57,20 +66,22 @@ def _query_pg_documents() -> list[DocumentInfo] | None:
                 (metadata_->>'parser_used')::varchar as parser_used,
                 count(*) as chunks,
                 max(id) as max_id,
-                max((metadata_->>'pages')::varchar) as pages,
-                max((metadata_->>'summary')::varchar) as summary
+                max((metadata_->>'pages')::varchar) as pages
             FROM data_documents
             GROUP BY 1,2,3
             ORDER BY max_id DESC
         """).fetchall()
         conn.close()
 
+        # Load MD5 store for summaries
+        md5_store = _load_md5_store()
+
         docs = []
         docs_dir = Path(settings.data_dir) / "documents"
         for r in rows:
             doc_id = r[0] or ""
             filename = r[1] or "unknown"
-            # Get file size & time from disk (match by prefix for UUID w/ or w/o dashes)
+            # Get file size & time from disk
             file_size = ""
             uploaded_at = ""
             pages_val = int(r[5]) if r[5] else None
@@ -83,15 +94,23 @@ def _query_pg_documents() -> list[DocumentInfo] | None:
                     uploaded_at = datetime.fromtimestamp(f.stat().st_mtime).isoformat()
                     break
 
+            # Get summary from MD5 store
+            summary = ""
+            for entry in md5_store.values():
+                if entry.get("doc_id") == doc_id:
+                    summary = entry.get("summary", "")[:300]
+                    break
+
             docs.append(DocumentInfo(
                 doc_id=doc_id, filename=filename, file_type=ext,
                 status="indexed", parser_used=r[2] or "unknown",
                 chunks_count=r[3], file_size=file_size,
                 pages=pages_val, uploaded_at=uploaded_at,
-                summary=(r[6] or "")[:300],
+                summary=summary,
             ))
         return docs
-    except Exception:
+    except Exception as exc:
+        logger.warning("_query_pg_documents failed: %s", exc)
         return None
 
 

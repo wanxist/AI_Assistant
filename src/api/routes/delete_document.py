@@ -41,7 +41,7 @@ def _delete_from_pgvector(doc_id: str) -> int:
             connect_timeout=5,
         )
         result = conn.execute(
-            "DELETE FROM data_documents WHERE metadata_->>'doc_id' = %s",
+            "DELETE FROM data_documents WHERE COALESCE(metadata_->>'source', metadata_->>'doc_id') = %s",
             [doc_id],
         )
         conn.commit()

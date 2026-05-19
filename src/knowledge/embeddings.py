@@ -11,11 +11,19 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Try local ModelScope path first, fall back to HuggingFace name
+# Prefer bge-m3 (MIT, BAAI, newer/better), fall back to bge-large-zh-v1.5
+# Both output 1024-dim vectors — no DB migration needed
 import os
 _PROJECT_ROOT = __file__.rsplit("src", 1)[0]
-_LOCAL_PATH = os.path.join(_PROJECT_ROOT, "data", "models", "BAAI", "bge-large-zh-v1___5")
-EMBEDDING_MODEL = _LOCAL_PATH if os.path.isdir(_LOCAL_PATH) else "BAAI/bge-large-zh-v1.5"
+_MODEL_DIR = os.path.join(_PROJECT_ROOT, "data", "models", "BAAI")
+_M3_PATH = os.path.join(_MODEL_DIR, "bge-m3")
+_V15_PATH = os.path.join(_MODEL_DIR, "bge-large-zh-v1___5")
+if os.path.isdir(_M3_PATH):
+    EMBEDDING_MODEL = _M3_PATH
+elif os.path.isdir(_V15_PATH):
+    EMBEDDING_MODEL = _V15_PATH
+else:
+    EMBEDDING_MODEL = "BAAI/bge-m3"
 EMBEDDING_DIM = 1024
 
 

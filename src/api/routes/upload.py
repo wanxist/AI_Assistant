@@ -73,7 +73,7 @@ async def upload_document(
             )
 
         # Chunk
-        chunker = Chunker(strategy="sentence", chunk_size=512, chunk_overlap=50)
+        chunker = Chunker(strategy="sentence", chunk_size=1024, chunk_overlap=100)
         chunks = chunker.chunk(parsed)
 
         parser_used = parsed[0].parser_used
@@ -101,11 +101,13 @@ async def upload_document(
         ingest_msg = ""
         nodes_count = None
         try:
+            # Don't pass summary as chunk metadata (too large, wastes chunk space)
+            # Summary is saved separately in MD5 store for document-level access
             n = ingest_documents(
                 chunks,
                 doc_id=doc_id,
                 filename=file.filename or "unknown",
-                extra_metadata={"pages": str(page_count), "summary": summary} if summary else {"pages": str(page_count)},
+                extra_metadata={"pages": str(page_count)},
             )
             nodes_count = n
             ingest_msg = f", {n} nodes ingested to vector store"
@@ -114,7 +116,7 @@ async def upload_document(
             ingest_msg = ", ingestion skipped (vector store unavailable)"
 
         # Save MD5 after successful ingestion
-        md5_store[file_hash] = {"doc_id": doc_id, "filename": file.filename}
+        md5_store[file_hash] = {"doc_id": doc_id, "filename": file.filename, "summary": summary}
         _save_md5_store(md5_store)
 
         return UploadResponse(
@@ -141,14 +143,15 @@ from fastapi.responses import StreamingResponse
 async def upload_stream(file: UploadFile = File(...)):
     """SSE streaming upload — reports parsing progress in real-time."""
 
+    # Read file BEFORE entering generator (temp file gets cleaned up otherwise)
+    content = await file.read()
+    file_hash = hashlib.md5(content).hexdigest()
+    filename = file.filename or "unknown"
+    ext = Path(filename).suffix
+
     async def generate():
         import json as _json
         yield f"data: {_json.dumps({'step':'read','msg':'读取文件中...'})}\n\n"
-
-        content = await file.read()
-        file_hash = hashlib.md5(content).hexdigest()
-        filename = file.filename or "unknown"
-        ext = Path(filename).suffix
 
         # Dedup
         md5_store = _load_md5_store()

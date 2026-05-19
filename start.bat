@@ -13,9 +13,12 @@ for /d /r "%BACKEND_DIR%" %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
 :: Prevent Python from creating new bytecode cache files
 set PYTHONDONTWRITEBYTECODE=1
 
+:: Suppress torch/tensorflow WMI warnings on Windows
+set TF_CPP_MIN_LOG_LEVEL=2
+
 :: Start backend
 echo   Backend : http://localhost:8000/docs
-start "AI_Backend" /d "%BACKEND_DIR%" cmd /k "set PYTHONDONTWRITEBYTECODE=1 && uvicorn src.api.main:app --reload --port 8000"
+start "AI_Backend" /d "%BACKEND_DIR%" cmd /k "set PYTHONDONTWRITEBYTECODE=1 && set TF_CPP_MIN_LOG_LEVEL=2 && uvicorn src.api.main:app --reload --port 8000"
 
 :: Start frontend
 if exist "%FRONTEND_DIR%" (
