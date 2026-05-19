@@ -44,8 +44,9 @@ async def chat(req: ChatRequest):
     if req.session_id and req.messages:
         try:
             conn = _pg()
-            # Save user message (last one in the array)
-            user_msg = req.messages[-1]["content"]
+            # Save the last user message (not just last message in array)
+            user_msgs = [m for m in req.messages if m.get("role") == "user"]
+            user_msg = user_msgs[-1]["content"] if user_msgs else ""
             conn.execute(
                 "INSERT INTO t_session_message (session_id, role, content) VALUES (%s,%s,%s)",
                 [req.session_id, "user", user_msg[:10000]],

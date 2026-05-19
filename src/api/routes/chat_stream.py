@@ -48,7 +48,8 @@ async def chat_stream(req: ChatRequest):
 
         # Save to session (collect full text during stream, then persist)
         if req.session_id and req.messages:
-            _save_messages(req.session_id, req.messages[-1]["content"], full_text)
+            user_msg = next((m["content"] for m in req.messages if m.get("role") == "user"), "")
+            _save_messages(req.session_id, user_msg, full_text)
 
     return StreamingResponse(
         generate(), media_type="text/event-stream",
