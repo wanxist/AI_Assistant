@@ -77,7 +77,7 @@ class QueryEngine:
 
         # Filter low-relevance results — if all scores below threshold, skip LLM
         top_nodes = nodes[:top_k]
-        if top_nodes and (top_nodes[0].score or 0) <= 0.35:
+        if top_nodes and (getattr(top_nodes[0], "score", 0) or 0) <= 0.35:
             return {
                 "answer": "知识库中没有找到相关信息。请先上传相关文档。",
                 "sources": [],
@@ -89,12 +89,13 @@ class QueryEngine:
 
         for i, node in enumerate(top_nodes):
             content = node.get_content()
-            context_parts.append(f"[{i + 1}] {content}")
+            fname = node.metadata.get("filename", "")
+            context_parts.append(f"[{i + 1}] ({fname})\n{content}")
             sources.append(SourceInfo(
                 doc_id=node.metadata.get("doc_id", ""),
                 filename=node.metadata.get("filename", ""),
                 chunk_index=node.metadata.get("chunk_index"),
-                score=round(node.score, 4) if node.score else None,
+                score=round(getattr(node, "score", 0), 4) if getattr(node, "score", None) else None,
                 snippet=content[:300],
             ))
 
@@ -109,6 +110,7 @@ class QueryEngine:
             max_tokens=1024,
         )
 
+        logger.info("RAG query: '%s' → %d sources, answer=%d chars", question, len(sources), len(answer))
         return {"answer": answer, "sources": sources}
 
     def _generate_hypothetical(self, question: str) -> str | None:

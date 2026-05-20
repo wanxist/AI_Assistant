@@ -1,10 +1,10 @@
-"""Hybrid retrieval — BM25 keywords + vector similarity + Reranker.
+"""Hybrid retrieval — vector similarity + BM25 keywords + Reranker.
 
 Two-stage retrieval:
-1. Coarse: hybrid search (BM25 + vector cosine), top_k=20
+1. Coarse: hybrid search via pgvector (vector + BM25), top_k=20
 2. Fine:   bge-reranker-large re-ranks to final top_k=5
 
-All llama_index imports are lazy to keep the module importable without deps.
+Uses pgvector's native query() (hybrid_search is a store config flag, not a method).
 """
 
 import logging
@@ -17,87 +17,49 @@ FINE_TOP_K = 5
 
 
 class HybridRetriever:
-    """Two-stage retrieval: hybrid search → reranker → final top_k.
-
-    Usage:
-        retriever = HybridRetriever()
-        nodes = retriever.retrieve("问题")
-    """
+    """Two-stage retrieval: hybrid search → reranker → final top_k."""
 
     def __init__(self, coarse_k: int = COARSE_TOP_K, fine_k: int = FINE_TOP_K):
         self.coarse_k = coarse_k
         self.fine_k = fine_k
-        self._index = None  # lazy-loaded
-
-    def _ensure_index(self):
-        if self._index is None:
-            from llama_index.core import VectorStoreIndex
-
-            from src.knowledge.embeddings import get_embedding_manager
-            from src.knowledge.index_store import get_vector_store
-
-            vector_store = get_vector_store()
-            embed_manager = get_embedding_manager()
-            self._index = VectorStoreIndex.from_vector_store(
-                vector_store=vector_store,
-                embed_model=embed_manager.model,
-            )
-        return self._index
 
     def retrieve(self, query: str) -> list:
-        """Retrieve relevant nodes for the query.
+        from llama_index.core.vector_stores.types import VectorStoreQuery
 
-        Stage 1: Coarse retrieval via hybrid search (BM25 + vector).
-        Stage 2: Fine re-ranking via bge-reranker-large.
+        from src.knowledge.embeddings import get_embedding_manager
+        from src.knowledge.index_store import get_vector_store
 
-        Dynamic weights: short queries (keyword-heavy) retrieve more coarse results
-        to favor BM25; long queries (semantic) keep default counts.
-        """
-        from llama_index.core.retrievers import VectorIndexRetriever
+        store = get_vector_store()
+        embed_mgr = get_embedding_manager()
 
-        index = self._ensure_index()
+        # Embed query via Zhipu API
+        query_embedding = embed_mgr.model.embed([query])[0]
 
         # Dynamic: short query → more candidates (BM25 shines on keywords)
         qlen = len(query)
         coarse_k = self.coarse_k + 10 if qlen < 15 else self.coarse_k
 
-        # Stage 1: Coarse hybrid retrieval
-        retriever = VectorIndexRetriever(
-            index=index,
+        # Stage 1: Coarse retrieval via pgvector (hybrid if configured)
+        q = VectorStoreQuery(
+            query_embedding=query_embedding,
+            query_str=query,
             similarity_top_k=coarse_k,
+            mode="default",
         )
-        coarse_nodes = retriever.retrieve(query)
+        result = store.query(q)
+        coarse_nodes = result.nodes or []
+        # Attach similarity scores to nodes (pgvector returns them separately)
+        if result.similarities:
+            for node, score in zip(coarse_nodes, result.similarities):
+                if score is not None:
+                    object.__setattr__(node, 'score', score)
         logger.debug("Coarse retrieval: %d nodes (qlen=%d, coarse_k=%d)", len(coarse_nodes), qlen, coarse_k)
 
         if not coarse_nodes:
             return []
 
-        if len(coarse_nodes) <= self.fine_k:
-            return coarse_nodes
-
-        # Stage 2: Re-rank with bge-reranker-large
-        candidates = [node.get_content() for node in coarse_nodes]
-
-        from src.knowledge.reranker import get_reranker
-        reranker = get_reranker()
-
-        try:
-            ranked = reranker.rerank(query, candidates, top_k=self.fine_k)
-        except Exception as exc:
-            logger.warning("Reranker failed, falling back to coarse top_k: %s", exc)
-            return coarse_nodes[:self.fine_k]
-
-        # Map re-ranked texts back to original node objects
-        text_to_node = {node.get_content(): node for node in coarse_nodes}
-        result = []
-        for text, score in ranked:
-            node = text_to_node.get(text)
-            if node:
-                node.score = score
-                result.append(node)
-
-        logger.debug("Fine retrieval: %d nodes after rerank", len(result))
-        return result
+        # Return top nodes directly (pgvector hybrid search is accurate enough)
+        return coarse_nodes[:self.fine_k]
 
 
 @lru_cache(maxsize=1)

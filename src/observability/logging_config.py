@@ -1,27 +1,49 @@
-"""Unified logging configuration."""
+"""Unified logging — stdout + rotating file."""
 
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from src.config import settings
 
+LOG_DIR = Path(settings.data_dir) / "logs"
+LOG_FILE = LOG_DIR / "app.log"
+
 
 def setup_logging() -> None:
-    """Configure logging for the entire application.
-
-    Called once at application startup (see api/main.py lifespan).
-    """
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
-
-    fmt = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(logging.Formatter(fmt, datefmt="%Y-%m-%d %H:%M:%S"))
+    fmt = "%(asctime)s | %(levelname)-5s | %(name)s | %(message)s"
+    formatter = logging.Formatter(fmt, datefmt="%Y-%m-%d %H:%M:%S")
 
     root = logging.getLogger()
     root.setLevel(level)
-    # Avoid duplicate handlers on reload
-    root.handlers = [handler]
+    root.handlers = []
 
-    # Quiet noisy third-party loggers
-    for name in ("httpx", "httpcore", "urllib3", "openai", "botocore"):
+    # Stdout
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(formatter)
+    sh.setLevel(level)
+    root.addHandler(sh)
+
+    # Rotating file (10MB, keep 5 backups)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    fh = RotatingFileHandler(str(LOG_FILE), maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8")
+    fh.setFormatter(formatter)
+    fh.setLevel(logging.DEBUG)   # file gets everything
+    root.addHandler(fh)
+
+    # Quiet noisy third-party
+    for name in ("httpx", "httpcore", "urllib3", "openai", "botocore", "multiprocess"):
         logging.getLogger(name).setLevel(logging.WARNING)
+
+    # Also route uvicorn logs to our handlers
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        ulog = logging.getLogger(name)
+        ulog.handlers = []
+        ulog.addHandler(sh)
+        ulog.addHandler(fh)
+        ulog.setLevel(level)
+        ulog.propagate = False
+
+    root.info("Logging to %s", LOG_FILE)

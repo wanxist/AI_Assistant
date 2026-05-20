@@ -1,17 +1,29 @@
 """FastAPI application entry point."""
 
+import logging
+import traceback
+
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from src.api.middleware import LoggingMiddleware
 from src.api.routes import health, chat, chat_stream, upload, documents, delete_document, query, sessions, auth
 from src.observability.logging_config import setup_logging
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
+    # Pre-load embedding model
+    try:
+        from src.knowledge.embeddings import get_embedding_manager
+        get_embedding_manager()._ensure_model()
+    except Exception:
+        pass
     yield
 
 
@@ -25,11 +37,22 @@ app = FastAPI(
 # Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
 app.add_middleware(LoggingMiddleware)
+
+
+# ── Global exception handler — logs all unhandled errors to file ──
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    tb = traceback.format_exc()
+    logger.error(
+        "Unhandled error: %s %s\n%s",
+        request.method, request.url.path, tb,
+    )
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
+
 
 # Routes
 app.include_router(health.router)

@@ -1,76 +1,71 @@
-"""Embedding model manager — bge-large-zh-v1.5 loaded locally.
-
-Provides singleton access to the embedding model for both ingestion and query.
-Uses LlamaIndex's HuggingFaceEmbedding wrapper (lazy-loaded) for seamless pipeline integration.
-"""
+"""Embedding — Zhipu API, LlamaIndex-compatible via BaseEmbedding."""
 
 import logging
 from functools import lru_cache
+from typing import Any, List, Optional
 
 from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Prefer bge-m3 (MIT, BAAI, newer/better), fall back to bge-large-zh-v1.5
-# Both output 1024-dim vectors — no DB migration needed
-import os
-_PROJECT_ROOT = __file__.rsplit("src", 1)[0]
-_MODEL_DIR = os.path.join(_PROJECT_ROOT, "data", "models", "BAAI")
-_M3_PATH = os.path.join(_MODEL_DIR, "bge-m3")
-_V15_PATH = os.path.join(_MODEL_DIR, "bge-large-zh-v1___5")
-if os.path.isdir(_M3_PATH):
-    EMBEDDING_MODEL = _M3_PATH
-elif os.path.isdir(_V15_PATH):
-    EMBEDDING_MODEL = _V15_PATH
-else:
-    EMBEDDING_MODEL = "BAAI/bge-m3"
-EMBEDDING_DIM = 1024
+
+class _ZhipuAPI:
+    """Zhipu embedding-3 API client."""
+
+    def __init__(self):
+        self.key = settings.zhipu_api_key
+        self.model = settings.zhipu_embedding_model
+        self.url = settings.zhipu_embedding_url
+        self.dim = settings.embedding_dim
+        self.batch = settings.embedding_batch_size
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        import requests
+        results = []
+        for i in range(0, len(texts), self.batch):
+            batch = texts[i:i + self.batch]
+            resp = requests.post(
+                self.url,
+                headers={"Authorization": f"Bearer {self.key}"},
+                json={"model": self.model, "input": batch, "dimensions": self.dim},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            results.extend([d["embedding"] for d in resp.json()["data"]])
+        return results
+
+
+# ── LlamaIndex-compatible wrapper ──────────────────────────
+
+# We need to pass isinstance(embed_model, BaseEmbedding) checks.
+# Rather than fighting LlamaIndex's type system, we replace the index
+# creation with a manual approach that doesn't validate embed_model type.
 
 
 class EmbeddingManager:
-    """Manages the bge-large-zh-v1.5 embedding model.
+    """Singleton access to Zhipu embedding."""
 
-    Wraps LlamaIndex HuggingFaceEmbedding so it plugs directly into
-    IngestionPipeline and VectorStoreIndex without glue code.
-    """
-
-    def __init__(self, model_name: str = EMBEDDING_MODEL):
-        self.model_name = model_name
-        self._model = None  # lazy-loaded
+    def __init__(self):
+        self._model = None
 
     def _ensure_model(self):
         if self._model is None:
-            from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-
-            logger.info("Loading embedding model: %s", self.model_name)
-            self._model = HuggingFaceEmbedding(
-                model_name=self.model_name,
-                cache_folder=settings.models_cache_dir,
-                embed_batch_size=16,
-            )
-            logger.info("Embedding model loaded (dim=%d)", EMBEDDING_DIM)
+            logger.info("Using Zhipu %s (API, dim=%d)", settings.zhipu_embedding_model, settings.embedding_dim)
+            self._model = _ZhipuAPI()
         return self._model
 
     @property
     def model(self):
+        """Use _ZhipuAPI directly as 'model' — ingestion needs it."""
         return self._ensure_model()
 
     def encode(self, texts: str | list[str]) -> list[list[float]]:
-        """Encode one or more texts to vectors.
-
-        Returns a list of lists, even for a single text.
-        """
         single = isinstance(texts, str)
-        if single:
-            texts = [texts]
-        embeddings = self.model.get_text_embedding_batch(texts)
-        if single:
-            return [embeddings[0]]
-        return embeddings
+        texts_list = [texts] if single else texts
+        return self._ensure_model().embed(texts_list)
 
     def encode_query(self, query: str) -> list[float]:
-        """Encode a query string. BGE models benefit from the query prefix."""
-        return self.model.get_query_embedding(query)
+        return self._ensure_model().embed([query])[0]
 
 
 @lru_cache(maxsize=1)

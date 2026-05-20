@@ -1,10 +1,6 @@
-"""Ingestion pipeline — Document → Embedding → Vector Store.
+"""Ingestion — manual split + Zhipu embed + pgvector insert.
 
-Takes ParsedDocument objects (from parsing layer), splits them into
-nodes via LlamaIndex SentenceSplitter, embeds with bge-large-zh-v1.5,
-and stores them in pgvector (or ChromaDB fallback).
-
-All llama_index imports are lazy to keep the module importable without deps.
+Bypasses LlamaIndex IngestionPipeline to avoid TransformComponent validation.
 """
 
 import logging
@@ -17,50 +13,22 @@ CHUNK_SIZE = 512
 CHUNK_OVERLAP = 50
 
 
-def build_pipeline():
-    """Build a LlamaIndex IngestionPipeline with bge embeddings + vector store."""
-    from llama_index.core.ingestion import IngestionPipeline
-    from llama_index.core.node_parser import SentenceSplitter
-
-    from src.knowledge.embeddings import get_embedding_manager
-    from src.knowledge.index_store import get_vector_store
-
-    embed_manager = get_embedding_manager()
-    vector_store = get_vector_store()
-
-    pipeline = IngestionPipeline(
-        transformations=[
-            SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP),
-            embed_manager.model,
-        ],
-        vector_store=vector_store,
-    )
-    return pipeline
-
-
 def ingest_documents(
     docs: list[ParsedDocument],
     doc_id: str = "",
     filename: str = "",
     extra_metadata: dict | None = None,
 ) -> int:
-    """Ingest parsed documents into the vector store.
-
-    Args:
-        docs: List of ParsedDocument from the parsing layer.
-        doc_id: Unique identifier for this document batch.
-        filename: Original filename for metadata.
-        extra_metadata: Additional fields (summary, pages, etc.).
-
-    Returns:
-        Number of nodes ingested.
-    """
+    """Split, embed via Zhipu API, insert into pgvector."""
     from llama_index.core import Document
+    from llama_index.core.node_parser import SentenceSplitter
 
     if not docs:
         logger.warning("No documents to ingest")
         return 0
 
+    # 1. Split
+    splitter = SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
     extra = extra_metadata or {}
     llama_docs = []
     for d in docs:
@@ -73,10 +41,21 @@ def ingest_documents(
         }
         llama_docs.append(Document(text=d.content, metadata=metadata))
 
-    pipeline = build_pipeline()
-    nodes = pipeline.run(documents=llama_docs)
+    nodes = splitter.get_nodes_from_documents(llama_docs)
+    texts = [n.get_content() for n in nodes]
+    logger.info("Split into %d nodes for %s", len(texts), filename)
 
-    logger.info(
-        "Ingested %d nodes for doc_id=%s (%s)", len(nodes), doc_id, filename
-    )
+    # 2. Embed
+    from src.knowledge.embeddings import _ZhipuAPI
+    api = _ZhipuAPI()
+    embeddings = api.embed(texts)
+    logger.info("Embedded %d vectors (dim=%d)", len(embeddings), len(embeddings[0]) if embeddings else 0)
+
+    # 3. Insert into vector store
+    from src.knowledge.index_store import get_vector_store
+    store = get_vector_store()
+    for node, emb in zip(nodes, embeddings):
+        node.embedding = emb
+    store.add(nodes)
+    logger.info("Inserted %d nodes for doc_id=%s (%s)", len(nodes), doc_id, filename)
     return len(nodes)

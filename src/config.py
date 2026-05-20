@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     # Zhipu (智谱 GLM)
     zhipu_api_key: str = ""
     zhipu_model: str = "glm-5.1"
+    zhipu_embedding_model: str = "embedding-3"
+    zhipu_embedding_url: str = "https://open.bigmodel.cn/api/paas/v4/embeddings"
+    embedding_dim: int = 1024
+    embedding_batch_size: int = 32
 
     # llama-parse
     llama_cloud_api_key: str = ""

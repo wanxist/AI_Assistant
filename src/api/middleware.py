@@ -1,4 +1,4 @@
-"""FastAPI middleware — logging, timing, error handling."""
+"""FastAPI middleware — logging, timing, error capture."""
 
 import time
 import logging
@@ -12,14 +12,17 @@ logger = logging.getLogger(__name__)
 class LoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         start = time.perf_counter()
-        response = await call_next(request)
-        elapsed = time.perf_counter() - start
-
-        logger.info(
-            "%s %s → %d (%.3fs)",
-            request.method,
-            request.url.path,
-            response.status_code,
-            elapsed,
-        )
+        try:
+            response = await call_next(request)
+            elapsed = time.perf_counter() - start
+            status = response.status_code
+        except Exception:
+            elapsed = time.perf_counter() - start
+            status = 500
+            raise
+        finally:
+            level = logging.WARNING if status >= 400 else logging.INFO
+            logger.log(
+                level, "%s %s → %d (%.3fs)", request.method, request.url.path, status, elapsed,
+            )
         return response
