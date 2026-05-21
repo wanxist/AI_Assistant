@@ -37,30 +37,38 @@ class QueryEngine:
             self._retriever = get_retriever()
         return self._retriever
 
-    def query(self, question: str, top_k: int = 5, use_hyde: bool = True) -> dict:
-        """Answer a question using RAG.
+    def query(self, question: str, top_k: int = 5) -> dict:
+        """Answer a question using RAG — two-stage retrieval.
+
+        Stage 1: direct retrieval. Fast path for common queries (no HyDE).
+        Stage 2: HyDE + reranker deep search. Only when stage 1 misses.
 
         Args:
             question: The user's question.
             top_k: Max number of source chunks to use.
-            use_hyde: Generate a hypothetical answer first to improve retrieval.
 
         Returns:
             {"answer": str, "sources": list[SourceInfo]}
         """
-        # HyDE: generate a hypothetical answer to bridge the query-document gap
-        search_query = question
-        if use_hyde:
-            hyde_text = self._generate_hypothetical(question)
-            if hyde_text:
-                search_query = hyde_text
-                logger.debug("HyDE query: %s", hyde_text[:100])
 
-        # 1. Retrieve
-        try:
-            nodes = self.retriever.retrieve(search_query)
-        except (ImportError, ModuleNotFoundError) as exc:
-            logger.warning("Vector store not available: %s", exc)
+        def _do_retrieve(search_query: str, deep: bool = False) -> list:
+            try:
+                if deep:
+                    return self.retriever.retrieve_with_rerank(search_query)
+                return self.retriever.retrieve(search_query)
+            except (ImportError, ModuleNotFoundError) as exc:
+                logger.warning("Vector store not available: %s", exc)
+                return None
+
+        def _not_found() -> dict:
+            return {
+                "answer": "知识库中没有找到相关信息。请先上传相关文档。",
+                "sources": [],
+            }
+
+        # Stage 1: direct retrieval
+        nodes = _do_retrieve(question)
+        if nodes is None:
             return {
                 "answer": (
                     "向量数据库未就绪。请先安装依赖并启动 pgvector 或 ChromaDB。\n"
@@ -68,22 +76,26 @@ class QueryEngine:
                 ),
                 "sources": [],
             }
-
         if not nodes:
-            return {
-                "answer": "知识库中没有找到相关信息。请先上传相关文档。",
-                "sources": [],
-            }
+            return _not_found()
 
-        # Filter low-relevance results — if all scores below threshold, skip LLM
+        top_score = getattr(nodes[0], "score", 0) or 0
+
+        # Stage 2: deep search — only when stage 1 is weak
+        if top_score <= 0.35:
+            hyde_text = self._generate_hypothetical(question)
+            if hyde_text:
+                logger.debug("Stage 2 deep search (HyDE): %s", hyde_text[:100])
+                nodes = _do_retrieve(hyde_text, deep=True)
+                if not nodes:
+                    return _not_found()
+
+        # Filter low-relevance results
         top_nodes = nodes[:top_k]
         if top_nodes and (getattr(top_nodes[0], "score", 0) or 0) <= 0.35:
-            return {
-                "answer": "知识库中没有找到相关信息。请先上传相关文档。",
-                "sources": [],
-            }
+            return _not_found()
 
-        # 2. Build context
+        # Build context
         context_parts = []
         sources = []
 
@@ -101,7 +113,7 @@ class QueryEngine:
 
         context = "\n\n".join(context_parts)
 
-        # 3. Generate answer via LLM
+        # Generate answer via LLM
         prompt = self._build_prompt(question, context)
         llm = get_llm()
         answer = llm.chat(

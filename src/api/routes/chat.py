@@ -32,13 +32,18 @@ async def chat(req: ChatRequest):
     if system_prompt and (not messages or messages[0].get("role") != "system"):
         messages = [{"role": "system", "content": system_prompt}] + list(messages)
 
-    content = llm.chat(
-        messages=messages,
-        provider=req.provider,
-        model=req.model,
-        temperature=req.temperature,
-        max_tokens=req.max_tokens,
-    )
+    # Detect RAG path: last message is already an assistant answer — skip LLM call
+    last_msg = req.messages[-1] if req.messages else None
+    if last_msg and last_msg.get("role") == "assistant":
+        content = last_msg["content"]
+    else:
+        content = llm.chat(
+            messages=messages,
+            provider=req.provider,
+            model=req.model,
+            temperature=req.temperature,
+            max_tokens=req.max_tokens,
+        )
 
     # Auto-persist messages if session_id provided
     if req.session_id and req.messages:

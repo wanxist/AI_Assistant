@@ -58,8 +58,59 @@ class HybridRetriever:
         if not coarse_nodes:
             return []
 
-        # Return top nodes directly (pgvector hybrid search is accurate enough)
+        # Return top nodes directly
         return coarse_nodes[:self.fine_k]
+
+    def retrieve_with_rerank(self, query: str) -> list:
+        """Two-stage retrieval with reranker for deep search.
+
+        Used when direct retrieval returns low-confidence results.
+        Re-ranks coarse candidates with bge-reranker-large.
+        """
+        from src.knowledge.embeddings import get_embedding_manager
+        from src.knowledge.index_store import get_vector_store
+        from src.knowledge.reranker import get_reranker
+        from llama_index.core.vector_stores.types import VectorStoreQuery
+
+        store = get_vector_store()
+        embed_mgr = get_embedding_manager()
+        query_embedding = embed_mgr.model.embed([query])[0]
+
+        qlen = len(query)
+        coarse_k = self.coarse_k + 10 if qlen < 15 else self.coarse_k
+
+        q = VectorStoreQuery(
+            query_embedding=query_embedding,
+            query_str=query,
+            similarity_top_k=coarse_k,
+            mode="default",
+        )
+        result = store.query(q)
+        coarse_nodes = result.nodes or []
+        if result.similarities:
+            for node, score in zip(coarse_nodes, result.similarities):
+                if score is not None:
+                    object.__setattr__(node, 'score', score)
+
+        if not coarse_nodes:
+            return []
+
+        # Stage 2: rerank
+        reranker = get_reranker()
+        candidates = [node.get_content() for node in coarse_nodes]
+        ranked = reranker.rerank(query, candidates, top_k=self.fine_k)
+
+        # Build a lookup: text → node
+        text_to_node = {node.get_content(): node for node in coarse_nodes}
+        reranked_nodes = []
+        for text, score in ranked:
+            node = text_to_node.get(text)
+            if node is not None:
+                object.__setattr__(node, 'score', score)
+                reranked_nodes.append(node)
+
+        logger.debug("Reranker: %d → %d nodes", len(coarse_nodes), len(reranked_nodes))
+        return reranked_nodes
 
 
 @lru_cache(maxsize=1)
