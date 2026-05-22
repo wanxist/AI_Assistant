@@ -1,26 +1,16 @@
 """GET /documents — list documents + detail endpoint."""
 
 import logging
-import os
-from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
+from src.api.deps import get_pg_connection
 from src.api.schemas import DocumentInfo, DocumentDetail, DocumentListResponse
 from src.config import settings
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 logger = logging.getLogger(__name__)
-
-MD5_STORE = Path(settings.data_dir) / "md5_store.json"
-
-
-def _load_md5_store() -> dict:
-    import json
-    if MD5_STORE.exists():
-        return json.loads(MD5_STORE.read_text())
-    return {}
 
 
 @router.get("", response_model=DocumentListResponse)
@@ -53,60 +43,40 @@ async def get_document(doc_id: str):
 
 def _query_pg_documents() -> list[DocumentInfo] | None:
     try:
-        import psycopg
-        conn = psycopg.connect(
-            host=settings.pg_host, port=settings.pg_port,
-            dbname=settings.pg_database, user=settings.pg_user,
-            password=settings.pg_password, connect_timeout=5,
-        )
+        conn = get_pg_connection()
         rows = conn.execute("""
             SELECT
-                (COALESCE(metadata_->>'source', metadata_->>'doc_id'))::varchar as doc_id,
-                (metadata_->>'filename')::varchar as filename,
-                (metadata_->>'parser_used')::varchar as parser_used,
+                COALESCE(dd.metadata_->>'source', dd.metadata_->>'doc_id') as doc_id,
+                (dd.metadata_->>'filename')::varchar as filename,
+                (dd.metadata_->>'parser_used')::varchar as parser_used,
                 count(*) as chunks,
-                max(id) as max_id,
-                max((metadata_->>'pages')::varchar) as pages
-            FROM data_documents
+                max(dd.id) as max_id,
+                max((dd.metadata_->>'pages')::int) as pages,
+                max(td.summary) as summary,
+                max(td.file_size) as file_size,
+                max(td.uploaded_at) as uploaded_at,
+                max(td.file_type) as file_type
+            FROM data_documents dd
+            LEFT JOIN t_document td ON td.doc_id = COALESCE(dd.metadata_->>'source', dd.metadata_->>'doc_id')
             GROUP BY 1,2,3
             ORDER BY max_id DESC
         """).fetchall()
         conn.close()
 
-        # Load MD5 store for summaries
-        md5_store = _load_md5_store()
-
         docs = []
-        docs_dir = Path(settings.data_dir) / "documents"
         for r in rows:
             doc_id = r[0] or ""
             filename = r[1] or "unknown"
-            # Get file size & time from disk
-            file_size = ""
-            uploaded_at = ""
-            pages_val = int(r[5]) if r[5] else None
-            ext = Path(filename).suffix
-            doc_stem = doc_id.replace("-", "")
-            for f in docs_dir.iterdir():
-                if f.is_file() and f.stem.replace("-", "") == doc_stem:
-                    sz = f.stat().st_size
-                    file_size = _fmt_size(sz)
-                    uploaded_at = datetime.fromtimestamp(f.stat().st_mtime).isoformat()
-                    break
-
-            # Get summary from MD5 store
-            summary = ""
-            for entry in md5_store.values():
-                if entry.get("doc_id") == doc_id:
-                    summary = entry.get("summary", "")[:300]
-                    break
+            ext = r[9] or Path(filename).suffix
+            size_raw = r[7]
+            uploaded_raw = r[8]
 
             docs.append(DocumentInfo(
                 doc_id=doc_id, filename=filename, file_type=ext,
                 status="indexed", parser_used=r[2] or "unknown",
-                chunks_count=r[3], file_size=file_size,
-                pages=pages_val, uploaded_at=uploaded_at,
-                summary=summary,
+                chunks_count=r[3], file_size=_fmt_size(size_raw) if size_raw else "",
+                pages=r[5], uploaded_at=uploaded_raw.isoformat() if uploaded_raw else "",
+                summary=(r[6] or "")[:300],
             ))
         return docs
     except Exception as exc:
@@ -116,12 +86,7 @@ def _query_pg_documents() -> list[DocumentInfo] | None:
 
 def _get_chunks(doc_id: str) -> list[str]:
     try:
-        import psycopg
-        conn = psycopg.connect(
-            host=settings.pg_host, port=settings.pg_port,
-            dbname=settings.pg_database, user=settings.pg_user,
-            password=settings.pg_password, connect_timeout=5,
-        )
+        conn = get_pg_connection()
         rows = conn.execute(
             "SELECT text FROM data_documents WHERE COALESCE(metadata_->>'source', metadata_->>'doc_id')=%s ORDER BY id",
             [doc_id],

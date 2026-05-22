@@ -1,14 +1,26 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -c \"import pytest; import fastapi; import pydantic; import openai; print\\('All core deps OK'\\)\")",
-      "Bash(pip install *)",
       "Bash(python -m pytest tests/ -v)",
-      "Bash(python -m ruff check src/)",
+      "Bash(python -m pytest tests/test_knowledge/test_reranker.py -v)",
+      "Bash(python -m pytest tests/test_parsing/ tests/test_api/ -v)",
       "Bash(python -c ' *)",
-      "Bash(python -c \"import llama_index; import chromadb; print\\('llama_index:', llama_index.__version__\\); print\\('chromadb:', chromadb.__version__\\)\")",
-      "Bash(sort -k6,7)",
-      "Bash(psql --version)"
+      "Bash(python scripts/generate_test_data.py)",
+      "Bash(pip install *)",
+      "Bash(ls data/models/BAAI/)",
+      "Bash(python -c \"from pathlib import Path; [print\(p\) for p in Path\('data/models/BAAI'\).iterdir\(\)]\")",
+      "Bash(ls -la data/models/BAAI/)",
+      "Bash(ls data/models/BAAI/bge-reranker-large/)",
+      "Bash(python -c \"from src.api.main import app; print\('✓ App loaded, routes:'\); [print\(f'  {m} {p}'\) for r in app.routes if hasattr\(r,'methods'\) and hasattr\(r,'path'\) for m in r.methods if m in \('GET','POST','DELETE'\) for p in [r.path]]\")",
+      "Bash(python -m pytest tests/ -v --no-header)",
+      "Bash(npm install *)",
+      "Bash(npx vite *)",
+      "Bash(mv \"c:/Users/p1317218/OneDrive - NCS PTE LTD/workspace/PyCode/AI_Assistant/ai-assistant-web\" \"c:/Users/p1317218/OneDrive - NCS PTE LTD/workspace/PyCode/ai-assistant-web\")",
+      "Bash(curl -s -N -X POST http://localhost:8000/chat/stream -H \"Content-Type: application/json\" -d '{\"messages\":[{\"role\":\"user\",\"content\":\"say hi in one word\"}],\"provider\":\"deepseek\",\"temperature\":0.0,\"max_tokens\":50}')",
+      "Bash(curl -s -N -X POST http://localhost:8000/chat/stream -H \"Content-Type: application/json\" -d '{\"messages\":[{\"role\":\"user\",\"content\":\"say hi in one sentence\"}],\"provider\":\"deepseek\",\"temperature\":0.0,\"max_tokens\":100}')"
+    ],
+    "additionalDirectories": [
+      "c:\Users\p1317218\OneDrive - NCS PTE LTD\workspace\PyCode"
     ]
   }
 }

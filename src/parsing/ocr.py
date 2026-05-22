@@ -1,9 +1,13 @@
 """OCR via PaddleOCR — for scanned PDFs and images."""
 
 import logging
+import os
 from pathlib import Path
 
 from src.parsing.loader import ParsedDocument
+
+# Disable OneDNN — PaddlePaddle 3.X has a PIR + OneDNN incompatibility on Windows
+os.environ["FLAGS_use_onednn"] = "0"
 
 logger = logging.getLogger(__name__)
 

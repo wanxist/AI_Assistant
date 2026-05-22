@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import Iterator
 from functools import lru_cache
 
 from src.config import settings
@@ -110,6 +111,50 @@ class LLMRouter:
         raise RuntimeError(
             f"All providers failed. Last error: {last_error}"
         ) from last_error
+
+    def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        provider: str = DEEPSEEK,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        fallback_chain: list[str] | None = None,
+    ) -> Iterator[str]:
+        """Stream chat with the same fallback chain as blocking chat.
+
+        Yields text chunks from the first successful provider. If a provider
+        fails before producing any chunks, the next provider in the chain
+        is tried automatically.
+        """
+        chain = fallback_chain or DEFAULT_FALLBACK_CHAIN
+        ordered = [provider] + [p for p in chain if p != provider]
+
+        last_error: Exception | None = None
+
+        for prov_name in ordered:
+            prov = self._providers.get(prov_name)
+            if prov is None or not prov.is_available():
+                logger.debug("Provider %s not available, skipping", prov_name)
+                continue
+
+            try:
+                for chunk in prov.chat_stream(
+                    messages, model=model, temperature=temperature,
+                    max_tokens=max_tokens,
+                ):
+                    yield chunk
+                return  # stream completed successfully
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Provider %s stream failed: %s, trying next in chain",
+                    prov_name, exc,
+                )
+
+        logger.error("All providers failed for stream. Last error: %s", last_error)
+        yield f"[错误] 所有AI服务暂时不可用，请稍后重试"
 
 
 @lru_cache(maxsize=1)

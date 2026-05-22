@@ -1,15 +1,14 @@
-"""POST /upload — upload and parse documents."""
+"""POST /upload — upload and parse documents, store metadata in t_document table."""
 
 import hashlib
-import json
 import logging
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from src.api.deps import get_document_loader
+from src.api.deps import get_document_loader, get_pg_connection
 from src.api.schemas import UploadResponse
 from src.config import settings
 from src.knowledge.ingestion import ingest_documents
@@ -19,19 +18,6 @@ from src.parsing.loader import DocumentLoader
 router = APIRouter(prefix="/upload", tags=["upload"])
 logger = logging.getLogger(__name__)
 
-MD5_STORE = Path(settings.data_dir) / "md5_store.json"
-
-
-def _load_md5_store() -> dict:
-    if MD5_STORE.exists():
-        return json.loads(MD5_STORE.read_text())
-    return {}
-
-
-def _save_md5_store(store: dict):
-    MD5_STORE.parent.mkdir(parents=True, exist_ok=True)
-    MD5_STORE.write_text(json.dumps(store, ensure_ascii=False))
-
 
 @router.post("", response_model=UploadResponse)
 async def upload_document(
@@ -40,47 +26,57 @@ async def upload_document(
 ):
     content = await file.read()
     file_hash = hashlib.md5(content).hexdigest()
+    file_size = len(content)
+    filename = file.filename or "unknown"
+    ext = Path(filename).suffix
 
-    # MD5 dedup check
-    md5_store = _load_md5_store()
-    if file_hash in md5_store:
-        existing = md5_store[file_hash]
-        return UploadResponse(
-            doc_id=existing.get("doc_id", ""),
-            filename=file.filename or "unknown",
-            file_type=Path(file.filename).suffix if file.filename else "",
-            status="duplicate",
-            parser_used="skipped",
-            chunks_count=None,
-            message=f"文件已存在 (doc_id: {existing.get('doc_id', '?')})",
-        )
+    # MD5 dedup — check t_document table
+    conn = get_pg_connection()
+    try:
+        existing = conn.execute(
+            "SELECT doc_id, filename FROM t_document WHERE md5_hash=%s", [file_hash]
+        ).fetchone()
+        if existing:
+            return UploadResponse(
+                doc_id=existing[0],
+                filename=filename,
+                file_type=ext,
+                status="duplicate",
+                parser_used="skipped",
+                chunks_count=None,
+                message=f"文件已存在 (doc_id: {existing[0]})",
+            )
+    finally:
+        conn.close()
 
-    # Persist file
+    # Persist file to disk
     doc_id = uuid.uuid4().hex[:12]
     upload_dir = Path(settings.data_dir) / "documents"
     upload_dir.mkdir(parents=True, exist_ok=True)
-    ext = Path(file.filename).suffix if file.filename else ".bin"
     saved_path = upload_dir / f"{doc_id}{ext}"
     saved_path.write_bytes(content)
 
     # Parse
+    parsed = []
+    chunks = []
+    parser_used = "unknown"
+    page_count = 0
+    summary = ""
+    parse_error = None
+
     try:
         parsed = loader.load(str(saved_path))
-        if not parsed:
-            return JSONResponse(
-                status_code=422,
-                content={"detail": "No content extracted from file"},
-            )
+    except Exception as exc:
+        logger.exception("Failed to parse %s", filename)
+        parse_error = str(exc)
 
-        # Chunk
+    if parsed:
         chunker = Chunker(strategy="sentence", chunk_size=1024, chunk_overlap=100)
         chunks = chunker.chunk(parsed)
-
         parser_used = parsed[0].parser_used
         page_count = len(parsed)
 
-        # Generate AI summary (stored in metadata for instant retrieval later)
-        summary = ""
+        # Generate AI summary
         try:
             full_text = " ".join(p.content for p in parsed)[:8000]
             from src.llm.router import get_llm
@@ -93,59 +89,64 @@ async def upload_document(
             )
         except Exception:
             pass
-        # Fallback: use first 200 chars of doc if LLM fails
         if not summary:
             summary = " ".join(p.content for p in parsed)[:200]
 
         # Ingest into vector store
-        ingest_msg = ""
-        nodes_count = None
         try:
-            # Don't pass summary as chunk metadata (too large, wastes chunk space)
-            # Summary is saved separately in MD5 store for document-level access
-            n = ingest_documents(
+            ingest_documents(
                 chunks,
                 doc_id=doc_id,
-                filename=file.filename or "unknown",
+                filename=filename,
                 extra_metadata={"pages": str(page_count)},
             )
-            nodes_count = n
-            ingest_msg = f", {n} nodes ingested to vector store"
         except Exception as exc:
             logger.warning("Ingestion skipped (vector store unavailable): %s", exc)
-            ingest_msg = ", ingestion skipped (vector store unavailable)"
 
-        # Save MD5 after successful ingestion
-        md5_store[file_hash] = {"doc_id": doc_id, "filename": file.filename, "summary": summary}
-        _save_md5_store(md5_store)
-
-        return UploadResponse(
-            doc_id=doc_id,
-            filename=file.filename or "unknown",
-            file_type=ext,
-            status="indexed" if nodes_count else "parsed",
-            parser_used=parser_used,
-            chunks_count=len(chunks),
-            message=f"Parsed with {parser_used}, {len(chunks)} chunks created{ingest_msg}",
+    # Always save metadata to t_document, even if parsing failed
+    conn = get_pg_connection()
+    try:
+        conn.execute(
+            """INSERT INTO t_document
+               (doc_id, filename, file_type, file_size, pages, parser_used,
+                chunks_count, summary, md5_hash)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            [doc_id, filename, ext, file_size, page_count, parser_used,
+             len(chunks), summary, file_hash],
         )
-    except Exception as exc:
-        logger.exception("Failed to parse %s", file.filename)
-        return JSONResponse(
-            status_code=500,
-            content={"detail": f"Parse failed: {exc}"},
-        )
+        conn.commit()
+    finally:
+        conn.close()
 
+    if parse_error:
+        status = "parse_failed"
+        msg = f"解析失败: {parse_error}"
+    elif not parsed:
+        status = "no_text"
+        msg = "图片中未检测到可识别文字" if ext.lower() in (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp") else "文档中未提取到文字内容"
+    else:
+        status = "indexed" if chunks else "parsed"
+        ingest_msg = f", {len(chunks)} chunks created"
+        msg = f"Parsed with {parser_used}, {len(chunks)} chunks created{ingest_msg}"
 
-from fastapi.responses import StreamingResponse
+    return UploadResponse(
+        doc_id=doc_id,
+        filename=filename,
+        file_type=ext,
+        status=status,
+        parser_used=parser_used,
+        chunks_count=len(chunks),
+        message=msg,
+    )
 
 
 @router.post("/stream")
 async def upload_stream(file: UploadFile = File(...)):
     """SSE streaming upload — reports parsing progress in real-time."""
 
-    # Read file BEFORE entering generator (temp file gets cleaned up otherwise)
     content = await file.read()
     file_hash = hashlib.md5(content).hexdigest()
+    file_size = len(content)
     filename = file.filename or "unknown"
     ext = Path(filename).suffix
 
@@ -154,12 +155,18 @@ async def upload_stream(file: UploadFile = File(...)):
         yield f"data: {_json.dumps({'step':'read','msg':'读取文件中...'})}\n\n"
 
         # Dedup
-        md5_store = _load_md5_store()
-        if file_hash in md5_store:
+        conn = get_pg_connection()
+        try:
+            existing = conn.execute(
+                "SELECT doc_id FROM t_document WHERE md5_hash=%s", [file_hash]
+            ).fetchone()
+        finally:
+            conn.close()
+        if existing:
             yield f"data: {_json.dumps({'step':'done','msg':'文件已存在，跳过','status':'duplicate'})}\n\n"
             return
 
-        # Save
+        # Save to disk
         doc_id = uuid.uuid4().hex[:12]
         upload_dir = Path(settings.data_dir) / "documents"
         upload_dir.mkdir(parents=True, exist_ok=True)
@@ -168,24 +175,55 @@ async def upload_stream(file: UploadFile = File(...)):
 
         yield f"data: {_json.dumps({'step':'parse','msg':'正在解析文档...'})}\n\n"
 
+        parsed = []
+        chunks = []
+        parser_used = "unknown"
+        page_count = 0
+        parse_error = None
+
         try:
             loader = DocumentLoader()
             parsed = loader.load(str(saved_path))
-            if not parsed:
-                yield f"data: {_json.dumps({'step':'error','msg':'无法提取内容'})}\n\n"
-                return
-            yield f"data: {_json.dumps({'step':'chunk','msg':f'解析完成，正在分块...','pages':len(parsed)})}\n\n"
+        except Exception as exc:
+            logger.exception("Failed to parse %s via streaming upload", filename)
+            parse_error = str(exc)
 
+        if parsed:
+            yield f"data: {_json.dumps({'step':'chunk','msg':f'解析完成，正在分块...','pages':len(parsed)})}\n\n"
             chunker = Chunker()
             chunks = chunker.chunk(parsed)
-            yield f"data: {_json.dumps({'step':'ingest','msg':f'分块完成({len(chunks)}块)，正在写入向量库...'})}\n\n"
+            parser_used = parsed[0].parser_used
+            page_count = len(parsed)
 
-            n = ingest_documents(chunks, doc_id=doc_id, filename=filename)
-            md5_store[file_hash] = {"doc_id": doc_id, "filename": filename}
-            _save_md5_store(md5_store)
-            yield f"data: {_json.dumps({'step':'done','msg':f'入库完成({n}条)','doc_id':doc_id,'chunks':len(chunks),'parser':parsed[0].parser_used})}\n\n"
-        except Exception as exc:
-            yield f"data: {_json.dumps({'step':'error','msg':str(exc)})}\n\n"
+            yield f"data: {_json.dumps({'step':'ingest','msg':f'分块完成({len(chunks)}块)，正在写入向量库...'})}\n\n"
+            try:
+                ingest_documents(chunks, doc_id=doc_id, filename=filename)
+            except Exception as exc:
+                logger.warning("Ingestion skipped: %s", exc)
+
+        # Always save to t_document
+        conn = get_pg_connection()
+        try:
+            conn.execute(
+                """INSERT INTO t_document
+                   (doc_id, filename, file_type, file_size, pages, parser_used,
+                    chunks_count, md5_hash)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                [doc_id, filename, ext, file_size, page_count, parser_used,
+                 len(chunks), file_hash],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        if parse_error:
+            yield f"data: {_json.dumps({'step':'done','msg':f'解析失败: {parse_error}','doc_id':doc_id,'status':'parse_failed'})}\n\n"
+        elif not parsed:
+            hint = "图片中未检测到可识别文字" if ext.lower() in (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp") else "文档中未提取到文字内容"
+            yield f"data: {_json.dumps({'step':'done','msg':hint,'doc_id':doc_id,'status':'no_text'})}\n\n"
+        else:
+            n_ingested = len(chunks)
+            yield f"data: {_json.dumps({'step':'done','msg':f'入库完成({n_ingested}条)','doc_id':doc_id,'chunks':len(chunks),'parser':parser_used,'status':'done'})}\n\n"
 
     return StreamingResponse(
         generate(), media_type="text/event-stream",
