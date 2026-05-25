@@ -45,11 +45,17 @@ def ingest_documents(
     texts = [n.get_content() for n in nodes]
     logger.info("Split into %d nodes for %s", len(texts), filename)
 
-    # 2. Embed
+    # 2. Embed — use original text for semantic quality
     from src.knowledge.embeddings import _ZhipuAPI
     api = _ZhipuAPI()
     embeddings = api.embed(texts)
     logger.info("Embedded %d vectors (dim=%d)", len(embeddings), len(embeddings[0]) if embeddings else 0)
+
+    # 2.5 Tokenize text for Chinese BM25 — insert spaces between words
+    #     so PG to_tsvector('simple', ...) can split CJK correctly.
+    from src.knowledge.tokenizer import tokenize
+    for node in nodes:
+        node.set_content(tokenize(node.get_content()))
 
     # 3. Insert into vector store
     from src.knowledge.index_store import get_vector_store

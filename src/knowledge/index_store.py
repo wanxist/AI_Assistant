@@ -59,7 +59,7 @@ def _create_pgvector_store() -> Any:
         embed_dim=1024,  # bge-large-zh-v1.5
         schema_name="public",
         hybrid_search=True,
-        text_search_config="simple",  # use 'chinese' if zhparser is installed
+        text_search_config="simple",
     )
     _init_pgvector_schema()
     return store

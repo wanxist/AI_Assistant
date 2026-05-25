@@ -32,8 +32,12 @@ class HybridRetriever:
         store = get_vector_store()
         embed_mgr = get_embedding_manager()
 
-        # Embed query via Zhipu API
+        # Embed query via Zhipu API (use original text)
         query_embedding = embed_mgr.model.embed([query])[0]
+
+        # Tokenize query for Chinese BM25
+        from src.knowledge.tokenizer import tokenize
+        tokenized_query = tokenize(query)
 
         # Dynamic: short query → more candidates (BM25 shines on keywords)
         qlen = len(query)
@@ -42,9 +46,9 @@ class HybridRetriever:
         # Stage 1: Coarse retrieval via pgvector (hybrid if configured)
         q = VectorStoreQuery(
             query_embedding=query_embedding,
-            query_str=query,
+            query_str=tokenized_query,
             similarity_top_k=coarse_k,
-            mode="default",
+            mode="hybrid",
         )
         result = store.query(q)
         coarse_nodes = result.nodes or []
@@ -76,14 +80,17 @@ class HybridRetriever:
         embed_mgr = get_embedding_manager()
         query_embedding = embed_mgr.model.embed([query])[0]
 
+        from src.knowledge.tokenizer import tokenize
+        tokenized_query = tokenize(query)
+
         qlen = len(query)
         coarse_k = self.coarse_k + 10 if qlen < 15 else self.coarse_k
 
         q = VectorStoreQuery(
             query_embedding=query_embedding,
-            query_str=query,
+            query_str=tokenized_query,
             similarity_top_k=coarse_k,
-            mode="default",
+            mode="hybrid",
         )
         result = store.query(q)
         coarse_nodes = result.nodes or []
