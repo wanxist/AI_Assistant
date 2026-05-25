@@ -182,3 +182,6 @@ data/models/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Claude Code
+.claude/settings.local.json
