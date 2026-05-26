@@ -32,8 +32,8 @@ class HybridRetriever:
         store = get_vector_store()
         embed_mgr = get_embedding_manager()
 
-        # Embed query via Zhipu API (use original text)
-        query_embedding = embed_mgr.model.embed([query])[0]
+        # Embed query (use original text)
+        query_embedding = embed_mgr.encode_query(query)
 
         # Tokenize query for Chinese BM25
         from src.knowledge.tokenizer import tokenize
@@ -78,7 +78,7 @@ class HybridRetriever:
 
         store = get_vector_store()
         embed_mgr = get_embedding_manager()
-        query_embedding = embed_mgr.model.embed([query])[0]
+        query_embedding = embed_mgr.encode_query(query)
 
         from src.knowledge.tokenizer import tokenize
         tokenized_query = tokenize(query)

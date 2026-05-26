@@ -46,9 +46,9 @@ def ingest_documents(
     logger.info("Split into %d nodes for %s", len(texts), filename)
 
     # 2. Embed — use original text for semantic quality
-    from src.knowledge.embeddings import _ZhipuAPI
-    api = _ZhipuAPI()
-    embeddings = api.embed(texts)
+    from src.knowledge.embeddings import get_embedding_manager
+    embed_mgr = get_embedding_manager()
+    embeddings = embed_mgr.encode(texts)
     logger.info("Embedded %d vectors (dim=%d)", len(embeddings), len(embeddings[0]) if embeddings else 0)
 
     # 2.5 Tokenize text for Chinese BM25 — insert spaces between words

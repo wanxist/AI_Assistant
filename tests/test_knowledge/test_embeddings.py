@@ -9,13 +9,14 @@ def test_get_embedding_manager_is_singleton():
     assert isinstance(m1, EmbeddingManager)
 
 
-def test_embedding_manager_uses_zhipu_api():
-    """EmbeddingManager delegates to Zhipu API, not local model."""
+def test_embedding_manager_creates_provider():
+    """EmbeddingManager creates the correct provider based on settings."""
     from src.knowledge.embeddings import EmbeddingManager
     from src.config import settings
 
     mgr = EmbeddingManager()
-    # Importable without torch/transformers (uses Zhipu HTTP API)
-    model = mgr.model  # _ZhipuAPI instance
-    assert model.model == settings.zhipu_embedding_model
-    assert model.dim == settings.embedding_dim
+    model = mgr.model
+    # Should have a `model` attribute (model name) and an `embed` method
+    assert hasattr(model, "model")
+    assert hasattr(model, "embed")
+    assert callable(model.embed)

@@ -10,6 +10,7 @@ from src.llm.base import BaseLLMProvider
 from src.llm.providers.deepseek import DeepSeekProvider
 from src.llm.providers.openai import OpenAIProvider
 from src.llm.providers.zhipu import ZhipuProvider
+from src.llm.providers.ali import AliProvider
 from src.llm.providers.mock import MockProvider
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 DEEPSEEK = "deepseek"
 OPENAI = "openai"
 ZHIPU = "zhipu"
+ALI = "ali"
 MOCK = "mock"
 
 # Ordered list of providers to try when the primary fails
@@ -163,6 +165,7 @@ def get_llm() -> LLMRouter:
     router = LLMRouter()
     router.register(DEEPSEEK, DeepSeekProvider())
     router.register(ZHIPU, ZhipuProvider())
+    router.register(ALI, AliProvider())
     router.register(OPENAI, OpenAIProvider())
     router.register(MOCK, MockProvider())
     return router

@@ -9,20 +9,24 @@ from src.utils.ssl_utils import get_httpx_client
 logger = logging.getLogger(__name__)
 
 
-class OpenAIProvider(BaseLLMProvider):
+class AliProvider(BaseLLMProvider):
+    """Alibaba Cloud DashScope LLM provider (OpenAI-compatible)."""
+
     def __init__(
         self,
         api_key: str | None = None,
-        default_model: str = "gpt-4o-mini",
+        base_url: str | None = None,
+        default_model: str | None = None,
     ):
-        self.api_key = api_key or settings.openai_api_key
-        self.default_model = default_model
+        self.api_key = api_key or settings.ali_api_key
+        self.base_url = base_url or settings.ali_base_url
+        self.default_model = default_model or settings.ali_chat_model
         self._client: OpenAI | None = None
 
     def _ensure_client(self) -> OpenAI:
         if self._client is None:
             http_client = get_httpx_client()
-            self._client = OpenAI(api_key=self.api_key, http_client=http_client)
+            self._client = OpenAI(api_key=self.api_key, base_url=self.base_url, http_client=http_client)
         return self._client
 
     def is_available(self) -> bool:
