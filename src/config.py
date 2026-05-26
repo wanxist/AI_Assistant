@@ -24,6 +24,16 @@ class Settings(BaseSettings):
     embedding_dim: int = 1024
     embedding_batch_size: int = 32
 
+    # Alibaba Cloud (DashScope)
+    ali_api_key: str = ""
+    ali_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    ali_chat_model: str = "qwen-plus"
+    ali_embedding_model: str = "text-embedding-v3"
+
+    # Provider selection
+    llm_provider: str = "deepseek"
+    embedding_provider: str = "zhipu"
+
     # llama-parse
     llama_cloud_api_key: str = ""
 
@@ -42,6 +52,10 @@ class Settings(BaseSettings):
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"
     s3_bucket: str = "ai-documents"
+
+    # SSL
+    ssl_verify: bool = True
+    ssl_cert_bundle: str = ""
 
     # App
     app_host: str = "0.0.0.0"

@@ -5,6 +5,7 @@ from openai import OpenAI
 
 from src.config import settings
 from src.llm.base import BaseLLMProvider
+from src.utils.ssl_utils import get_httpx_client
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,8 @@ class DeepSeekProvider(BaseLLMProvider):
 
     def _ensure_client(self) -> OpenAI:
         if self._client is None:
-            self._client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+            http_client = get_httpx_client()
+            self._client = OpenAI(api_key=self.api_key, base_url=self.base_url, http_client=http_client)
         return self._client
 
     def is_available(self) -> bool:

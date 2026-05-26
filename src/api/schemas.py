@@ -3,12 +3,14 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
 
+from src.config import settings
+
 
 # ── Chat ───────────────────────────────────────────
 
 class ChatRequest(BaseModel):
     messages: list[dict[str, str]]
-    provider: str = "deepseek"
+    provider: str = settings.llm_provider
     model: str | None = None
     temperature: float = 0.0
     max_tokens: int = 4096
