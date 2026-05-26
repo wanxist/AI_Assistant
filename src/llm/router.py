@@ -45,7 +45,7 @@ class LLMRouter:
         self,
         messages: list[dict[str, str]],
         *,
-        provider: str = DEEPSEEK,
+        provider: str | None = None,
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
@@ -58,7 +58,7 @@ class LLMRouter:
 
         Args:
             messages: Chat messages in OpenAI format.
-            provider: Primary provider name.
+            provider: Primary provider name (defaults to settings.llm_provider).
             model: Model override (uses provider default if None).
             temperature: Sampling temperature.
             max_tokens: Max tokens in response.
@@ -66,7 +66,7 @@ class LLMRouter:
             retries: Number of retry attempts per provider.
             backoff: Base seconds between retries.
             fallback_chain: Ordered backup providers if primary fails.
-                Defaults to [deepseek, openai, mock].
+                Defaults to [deepseek, zhipu, openai, mock].
 
         Returns:
             Text response from the first successful provider.
@@ -74,6 +74,7 @@ class LLMRouter:
         Raises:
             RuntimeError: If all providers in the chain fail.
         """
+        provider = provider or settings.llm_provider
         chain = fallback_chain or DEFAULT_FALLBACK_CHAIN
         # Ensure primary provider is first in chain
         ordered = [provider] + [p for p in chain if p != provider]
@@ -118,7 +119,7 @@ class LLMRouter:
         self,
         messages: list[dict[str, str]],
         *,
-        provider: str = DEEPSEEK,
+        provider: str | None = None,
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
@@ -130,6 +131,7 @@ class LLMRouter:
         fails before producing any chunks, the next provider in the chain
         is tried automatically.
         """
+        provider = provider or settings.llm_provider
         chain = fallback_chain or DEFAULT_FALLBACK_CHAIN
         ordered = [provider] + [p for p in chain if p != provider]
 
