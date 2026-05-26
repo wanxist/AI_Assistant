@@ -174,7 +174,7 @@ cython_debug/
 .pypirc
 
 # Model cache (bge-large-zh-v1.5, bge-reranker-large, ~2.6GB)
-data/models/
+data/
 
 # Cursor
 #  Cursor is an AI-powered code editor.`.cursorignore` specifies files/directories to 
@@ -186,3 +186,4 @@ data/models/
 # Claude Code
 .claude/settings.local.json
 .claude/CLAUDE.md
+.env

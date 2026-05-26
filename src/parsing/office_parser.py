@@ -25,14 +25,40 @@ class OfficeParser:
         from docx import Document
 
         doc = Document(file_path)
+
+        # Body paragraphs
         paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-        content = "\n\n".join(paragraphs)
+
+        # Table content — each row joined as "cell1 | cell2 | ..."
+        table_lines = []
+        for table in doc.tables:
+            for row in table.rows:
+                cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if cells:
+                    table_lines.append(" | ".join(cells))
+
+        # Text box content (<w:txbxContent>) — not exposed by python-docx API
+        nsmap = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        txbx_blocks = doc.element.body.findall(".//w:txbxContent", nsmap)
+        txbx_texts = []
+        for txbx in txbx_blocks:
+            texts = [t.text or "" for t in txbx.findall(".//w:t", nsmap)]
+            line = "".join(texts).strip()
+            if line:
+                txbx_texts.append(line)
+
+        content = "\n\n".join(paragraphs + table_lines + txbx_texts)
 
         return [ParsedDocument(
             file_path=file_path,
             file_type="docx",
             content=content,
-            metadata={"source": Path(file_path).stem, "paragraphs": len(paragraphs)},
+            metadata={
+                "source": Path(file_path).stem,
+                "paragraphs": len(paragraphs),
+                "tables": len(doc.tables),
+                "textboxes": len(txbx_texts),
+            },
             parser_used="python-docx",
         )]
 

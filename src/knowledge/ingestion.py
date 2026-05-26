@@ -1,6 +1,7 @@
-"""Ingestion — manual split + Zhipu embed + pgvector insert.
+"""Ingestion — embed + tokenize + insert into pgvector.
 
-Bypasses LlamaIndex IngestionPipeline to avoid TransformComponent validation.
+Docs arrive pre-chunked from Chunker. No re-splitting here — that would
+break the semantic boundaries Chunker already established.
 """
 
 import logging
@@ -9,9 +10,6 @@ from src.parsing.loader import ParsedDocument
 
 logger = logging.getLogger(__name__)
 
-CHUNK_SIZE = 512
-CHUNK_OVERLAP = 50
-
 
 def ingest_documents(
     docs: list[ParsedDocument],
@@ -19,18 +17,22 @@ def ingest_documents(
     filename: str = "",
     extra_metadata: dict | None = None,
 ) -> int:
-    """Split, embed via Zhipu API, insert into pgvector."""
-    from llama_index.core import Document
-    from llama_index.core.node_parser import SentenceSplitter
+    """Embed via configured provider, insert into pgvector.
 
+    Each ParsedDocument becomes one TextNode — chunk boundaries set by
+    Chunker are preserved. Tokenized text is stored in node content for
+    BM25; original text is saved in metadata for the LLM and reranker.
+    """
     if not docs:
         logger.warning("No documents to ingest")
         return 0
 
-    # 1. Split
-    splitter = SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+    from llama_index.core.schema import TextNode
+
     extra = extra_metadata or {}
-    llama_docs = []
+
+    # 1. Create one TextNode per chunk (no re-splitting)
+    nodes = []
     for d in docs:
         metadata = {
             "doc_id": doc_id,
@@ -39,11 +41,11 @@ def ingest_documents(
             **extra,
             **d.metadata,
         }
-        llama_docs.append(Document(text=d.content, metadata=metadata))
+        node = TextNode(text=d.content, metadata=metadata)
+        nodes.append(node)
 
-    nodes = splitter.get_nodes_from_documents(llama_docs)
     texts = [n.get_content() for n in nodes]
-    logger.info("Split into %d nodes for %s", len(texts), filename)
+    logger.info("Ingesting %d nodes for %s", len(texts), filename)
 
     # 2. Embed — use original text for semantic quality
     from src.knowledge.embeddings import get_embedding_manager
@@ -51,13 +53,13 @@ def ingest_documents(
     embeddings = embed_mgr.encode(texts)
     logger.info("Embedded %d vectors (dim=%d)", len(embeddings), len(embeddings[0]) if embeddings else 0)
 
-    # 2.5 Tokenize text for Chinese BM25 — insert spaces between words
-    #     so PG to_tsvector('simple', ...) can split CJK correctly.
+    # 3. Tokenize text for Chinese BM25; keep original text for LLM/reranker
     from src.knowledge.tokenizer import tokenize
     for node in nodes:
+        node.metadata["original_text"] = node.get_content()
         node.set_content(tokenize(node.get_content()))
 
-    # 3. Insert into vector store
+    # 4. Insert into vector store
     from src.knowledge.index_store import get_vector_store
     store = get_vector_store()
     for node, emb in zip(nodes, embeddings):

@@ -88,7 +88,7 @@ async def upload_document(
                 temperature=0.0, max_tokens=500,
             )
         except Exception:
-            pass
+            logger.warning("AI summary generation failed", exc_info=True)
         if not summary:
             summary = " ".join(p.content for p in parsed)[:200]
 

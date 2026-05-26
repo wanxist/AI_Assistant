@@ -100,7 +100,7 @@ class QueryEngine:
         sources = []
 
         for i, node in enumerate(top_nodes):
-            content = node.get_content()
+            content = node.metadata.get("original_text", node.get_content())
             fname = node.metadata.get("filename", "")
             context_parts.append(f"[{i + 1}] ({fname})\n{content}")
             sources.append(SourceInfo(

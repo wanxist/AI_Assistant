@@ -102,19 +102,19 @@ class HybridRetriever:
         if not coarse_nodes:
             return []
 
-        # Stage 2: rerank
+        # Stage 2: rerank on original text
         reranker = get_reranker()
-        candidates = [node.get_content() for node in coarse_nodes]
+        candidates = [n.metadata.get("original_text", n.get_content()) for n in coarse_nodes]
         ranked = reranker.rerank(query, candidates, top_k=self.fine_k)
 
-        # Build a lookup: text → node
-        text_to_node = {node.get_content(): node for node in coarse_nodes}
+        # Index-based lookup to avoid losing nodes with identical text
         reranked_nodes = []
         for text, score in ranked:
-            node = text_to_node.get(text)
-            if node is not None:
-                object.__setattr__(node, 'score', score)
-                reranked_nodes.append(node)
+            for i, node in enumerate(coarse_nodes):
+                if node.metadata.get("original_text", node.get_content()) == text:
+                    object.__setattr__(node, 'score', score)
+                    reranked_nodes.append(node)
+                    break
 
         logger.debug("Reranker: %d → %d nodes", len(coarse_nodes), len(reranked_nodes))
         return reranked_nodes
