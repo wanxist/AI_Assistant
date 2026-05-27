@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, Depends
 
 from src.api.schemas import QueryRequest, QueryResponse
+from src.api.routes.auth import get_current_user
 from src.knowledge.query_engine import QueryEngine, get_query_engine
 
 router = APIRouter(prefix="/query", tags=["query"])
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 async def query_knowledge(
     req: QueryRequest,
     engine: QueryEngine = Depends(get_query_engine),
+    user: dict = Depends(get_current_user),
 ):
     """Query the knowledge base.
 

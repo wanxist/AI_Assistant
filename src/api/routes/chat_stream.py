@@ -3,10 +3,11 @@
 import json
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from src.api.deps import get_pg_connection
+from src.api.routes.auth import get_current_user
 from src.api.schemas import ChatRequest
 from src.config import settings
 from src.llm.router import get_llm
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.post("/stream")
-async def chat_stream(req: ChatRequest):
+async def chat_stream(req: ChatRequest, user: dict = Depends(get_current_user)):
 
     async def generate():
         provider = req.provider or "deepseek"

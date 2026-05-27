@@ -2,8 +2,9 @@
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from src.api.routes.auth import get_current_user
 from src.api.schemas import ChatRequest, ChatResponse
 from src.config import settings
 from src.llm.router import get_llm
@@ -22,7 +23,7 @@ def _pg():
 
 
 @router.post("", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
     llm = get_llm()
 
     # Inject system prompt from YAML template

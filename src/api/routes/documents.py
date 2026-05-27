@@ -3,9 +3,10 @@
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from src.api.deps import get_pg_connection
+from src.api.routes.auth import get_current_user
 from src.api.schemas import DocumentInfo, DocumentDetail, DocumentListResponse
 from src.config import settings
 
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=DocumentListResponse)
-async def list_documents():
+async def list_documents(user: dict = Depends(get_current_user)):
     try:
         docs = _query_pg_documents()
         if docs is not None:
@@ -26,7 +27,7 @@ async def list_documents():
 
 
 @router.get("/{doc_id}", response_model=DocumentDetail)
-async def get_document(doc_id: str):
+async def get_document(doc_id: str, user: dict = Depends(get_current_user)):
     docs = _query_pg_documents()
     for d in docs:
         if d.doc_id == doc_id:

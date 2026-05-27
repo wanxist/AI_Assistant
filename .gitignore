@@ -188,3 +188,6 @@ data/
 .claude/CLAUDE.md
 .env
 .claude/*
+
+#test
+tests/*

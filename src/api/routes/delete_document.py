@@ -3,9 +3,10 @@
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from src.api.deps import get_pg_connection
+from src.api.routes.auth import get_current_user
 from src.api.schemas import DeleteDocumentResponse
 from src.config import settings
 
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.delete("/{doc_id}", response_model=DeleteDocumentResponse)
-async def delete_document(doc_id: str):
+async def delete_document(doc_id: str, user: dict = Depends(get_current_user)):
     """Delete a document from pgvector, t_document, and local filesystem."""
     conn = get_pg_connection()
     try:

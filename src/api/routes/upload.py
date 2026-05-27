@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from src.api.deps import get_document_loader, get_pg_connection
 from src.api.schemas import UploadResponse
+from src.api.routes.auth import get_current_user
 from src.config import settings
 from src.knowledge.ingestion import ingest_documents
 from src.parsing.chunker import Chunker
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 async def upload_document(
     file: UploadFile = File(...),
     loader: DocumentLoader = Depends(get_document_loader),
+    user: dict = Depends(get_current_user),
 ):
     content = await file.read()
     file_hash = hashlib.md5(content).hexdigest()
@@ -141,7 +143,7 @@ async def upload_document(
 
 
 @router.post("/stream")
-async def upload_stream(file: UploadFile = File(...)):
+async def upload_stream(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     """SSE streaming upload — reports parsing progress in real-time."""
 
     content = await file.read()
