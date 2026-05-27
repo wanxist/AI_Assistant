@@ -109,6 +109,8 @@ class SessionInfo(BaseModel):
 
 class SessionDetail(SessionInfo):
     messages: list[dict[str, str]] = []
+    has_more: bool = False
+    summary: str = ""
 
 
 class SessionListResponse(BaseModel):

@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     retrieval_stage2_threshold: float = 0.0  # reranker logits, >0 = relevant
     retrieval_mode: str = "hybrid"
 
+    # Chat context
+    chat_max_rounds: int = 30
+    chat_context_tokens: int = 8000
+    chat_page_size: int = 20
+
+    # Summarization
+    chat_summarize_trigger: int = 200
+    chat_summarize_keep_recent: int = 20
+
     # App
     app_host: str = "0.0.0.0"
     app_port: int = 8000

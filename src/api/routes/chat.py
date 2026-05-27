@@ -8,6 +8,8 @@ from src.api.routes.auth import get_current_user
 from src.api.schemas import ChatRequest, ChatResponse
 from src.config import settings
 from src.llm.router import get_llm
+from src.utils.trim_messages import trim_messages
+from src.utils.summarizer import get_summary, summarize_session
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -32,6 +34,15 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
     messages = req.messages
     if system_prompt and (not messages or messages[0].get("role") != "system"):
         messages = [{"role": "system", "content": system_prompt}] + list(messages)
+
+    # Trim context to fit token budget and round limit
+    messages = trim_messages(messages, settings.chat_context_tokens, settings.chat_max_rounds)
+
+    # Inject session summary into system prompt
+    if req.session_id:
+        summary = get_summary(req.session_id)
+        if summary and messages and messages[0].get("role") == "system":
+            messages[0]["content"] += "\n\n[对话历史摘要]\n" + summary
 
     # Detect RAG path: last message is already an assistant answer — skip LLM call
     last_msg = req.messages[-1] if req.messages else None
@@ -78,6 +89,13 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
             conn.close()
         except Exception as exc:
             logger.warning("Failed to persist chat message: %s", exc)
+
+    # Try summarization after save (best-effort, separate connection)
+    if req.session_id:
+        try:
+            summarize_session(req.session_id)
+        except Exception:
+            pass
 
     return ChatResponse(
         content=content,

@@ -55,10 +55,15 @@ async def list_sessions(user: dict = Depends(get_current_user)):
 
 
 @router.get("/{sid}")
-async def get_session(sid: str, user: dict = Depends(get_current_user)):
+async def get_session(
+    sid: str,
+    limit: int = settings.chat_page_size,
+    before_id: int | None = None,
+    user: dict = Depends(get_current_user),
+):
     conn = _pg()
     row = conn.execute(
-        "SELECT id, title, user_id FROM t_session_info WHERE id=%s", [sid]
+        "SELECT id, title, user_id, summary FROM t_session_info WHERE id=%s", [sid]
     ).fetchone()
     if not row:
         conn.close()
@@ -66,14 +71,37 @@ async def get_session(sid: str, user: dict = Depends(get_current_user)):
     if row[2] != user["user_id"]:
         conn.close()
         raise HTTPException(403, "无权访问")
-    msgs = conn.execute(
-        "SELECT role, content FROM t_session_message WHERE session_id=%s ORDER BY id",
-        [sid],
-    ).fetchall()
+
+    fetch_limit = limit + 1  # one extra to determine has_more
+    if before_id:
+        msgs = conn.execute(
+            """SELECT id, role, content FROM (
+                   SELECT id, role, content FROM t_session_message
+                   WHERE session_id=%s AND id < %s
+                   ORDER BY id DESC LIMIT %s
+               ) t ORDER BY id ASC""",
+            [sid, before_id, fetch_limit],
+        ).fetchall()
+    else:
+        msgs = conn.execute(
+            """SELECT id, role, content FROM (
+                   SELECT id, role, content FROM t_session_message
+                   WHERE session_id=%s
+                   ORDER BY id DESC LIMIT %s
+               ) t ORDER BY id ASC""",
+            [sid, fetch_limit],
+        ).fetchall()
     conn.close()
+
+    has_more = len(msgs) > limit
+    if has_more:
+        msgs = msgs[1:]  # drop the earliest (extra) row
+
     return {
         "id": row[0], "title": row[1],
-        "messages": [{"role": r[0], "content": r[1]} for r in msgs],
+        "messages": [{"id": r[0], "role": r[1], "content": r[2]} for r in msgs],
+        "has_more": has_more,
+        "summary": row[3] or "",
     }
 
 
