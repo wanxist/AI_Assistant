@@ -187,3 +187,4 @@ data/
 .claude/settings.local.json
 .claude/CLAUDE.md
 .env
+.claude/*

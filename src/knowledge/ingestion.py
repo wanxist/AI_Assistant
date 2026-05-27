@@ -44,20 +44,20 @@ def ingest_documents(
         node = TextNode(text=d.content, metadata=metadata)
         nodes.append(node)
 
-    texts = [n.get_content() for n in nodes]
-    logger.info("Ingesting %d nodes for %s", len(texts), filename)
+    # 2. Embed — capture original text BEFORE tokenization
+    original_texts = [n.text for n in nodes]
+    logger.info("Ingesting %d nodes for %s", len(original_texts), filename)
 
-    # 2. Embed — use original text for semantic quality
     from src.knowledge.embeddings import get_embedding_manager
     embed_mgr = get_embedding_manager()
-    embeddings = embed_mgr.encode(texts)
+    embeddings = embed_mgr.encode(original_texts)
     logger.info("Embedded %d vectors (dim=%d)", len(embeddings), len(embeddings[0]) if embeddings else 0)
 
-    # 3. Tokenize text for Chinese BM25; keep original text for LLM/reranker
+    # 3. Tokenize for BM25; save original text for LLM/reranker
     from src.knowledge.tokenizer import tokenize
     for node in nodes:
-        node.metadata["original_text"] = node.get_content()
-        node.set_content(tokenize(node.get_content()))
+        node.metadata["original_text"] = node.text
+        node.set_content(tokenize(node.text))
 
     # 4. Insert into vector store
     from src.knowledge.index_store import get_vector_store

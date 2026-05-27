@@ -10,18 +10,26 @@ Uses pgvector's native query() (hybrid_search is a store config flag, not a meth
 import logging
 from functools import lru_cache
 
+from src.config import settings
+
 logger = logging.getLogger(__name__)
 
-COARSE_TOP_K = 20
-FINE_TOP_K = 5
+
+def _get_original_text(node) -> str:
+    """Return original text for LLM/reranker, falling back to content with warning."""
+    ot = node.metadata.get("original_text")
+    if ot:
+        return ot
+    logger.warning("Node %s missing original_text, using tokenized content", node.node_id)
+    return node.get_content()
 
 
 class HybridRetriever:
     """Two-stage retrieval: hybrid search → reranker → final top_k."""
 
-    def __init__(self, coarse_k: int = COARSE_TOP_K, fine_k: int = FINE_TOP_K):
-        self.coarse_k = coarse_k
-        self.fine_k = fine_k
+    def __init__(self, coarse_k: int | None = None, fine_k: int | None = None):
+        self.coarse_k = coarse_k if coarse_k is not None else settings.retrieval_coarse_k
+        self.fine_k = fine_k if fine_k is not None else settings.retrieval_fine_k
 
     def retrieve(self, query: str) -> list:
         from llama_index.core.vector_stores.types import VectorStoreQuery
@@ -41,14 +49,14 @@ class HybridRetriever:
 
         # Dynamic: short query → more candidates (BM25 shines on keywords)
         qlen = len(query)
-        coarse_k = self.coarse_k + 10 if qlen < 15 else self.coarse_k
+        coarse_k = self.coarse_k + settings.retrieval_short_query_boost if qlen < settings.retrieval_short_query_len else self.coarse_k
 
         # Stage 1: Coarse retrieval via pgvector (hybrid if configured)
         q = VectorStoreQuery(
             query_embedding=query_embedding,
             query_str=tokenized_query,
             similarity_top_k=coarse_k,
-            mode="hybrid",
+            mode=settings.retrieval_mode,
         )
         result = store.query(q)
         coarse_nodes = result.nodes or []
@@ -84,13 +92,13 @@ class HybridRetriever:
         tokenized_query = tokenize(query)
 
         qlen = len(query)
-        coarse_k = self.coarse_k + 10 if qlen < 15 else self.coarse_k
+        coarse_k = self.coarse_k + settings.retrieval_short_query_boost if qlen < settings.retrieval_short_query_len else self.coarse_k
 
         q = VectorStoreQuery(
             query_embedding=query_embedding,
             query_str=tokenized_query,
             similarity_top_k=coarse_k,
-            mode="hybrid",
+            mode=settings.retrieval_mode,
         )
         result = store.query(q)
         coarse_nodes = result.nodes or []
@@ -104,14 +112,14 @@ class HybridRetriever:
 
         # Stage 2: rerank on original text
         reranker = get_reranker()
-        candidates = [n.metadata.get("original_text", n.get_content()) for n in coarse_nodes]
+        candidates = [_get_original_text(n) for n in coarse_nodes]
         ranked = reranker.rerank(query, candidates, top_k=self.fine_k)
 
         # Index-based lookup to avoid losing nodes with identical text
         reranked_nodes = []
         for text, score in ranked:
             for i, node in enumerate(coarse_nodes):
-                if node.metadata.get("original_text", node.get_content()) == text:
+                if _get_original_text(node) == text:
                     object.__setattr__(node, 'score', score)
                     reranked_nodes.append(node)
                     break

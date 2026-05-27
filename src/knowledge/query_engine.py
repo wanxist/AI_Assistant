@@ -10,6 +10,7 @@ Orchestrates the full RAG flow:
 import logging
 from functools import lru_cache
 
+from src.config import settings
 from src.llm.router import get_llm
 from src.api.schemas import SourceInfo
 
@@ -81,8 +82,8 @@ class QueryEngine:
 
         top_score = getattr(nodes[0], "score", 0) or 0
 
-        # Stage 2: deep search — only when stage 1 is weak
-        if top_score <= 0.35:
+        # Stage 2: deep search — only when stage 1 is weak (cosine similarity)
+        if top_score <= settings.retrieval_stage1_threshold:
             hyde_text = self._generate_hypothetical(question)
             if hyde_text:
                 logger.debug("Stage 2 deep search (HyDE): %s", hyde_text[:100])
@@ -92,7 +93,7 @@ class QueryEngine:
 
         # Filter low-relevance results
         top_nodes = nodes[:top_k]
-        if top_nodes and (getattr(top_nodes[0], "score", 0) or 0) <= 0.35:
+        if top_nodes and (getattr(top_nodes[0], "score", 0) or 0) <= settings.retrieval_stage2_threshold:
             return _not_found()
 
         # Build context
@@ -100,7 +101,10 @@ class QueryEngine:
         sources = []
 
         for i, node in enumerate(top_nodes):
-            content = node.metadata.get("original_text", node.get_content())
+            content = node.metadata.get("original_text")
+            if not content:
+                logger.warning("Node %s missing original_text, using tokenized content", node.node_id)
+                content = node.get_content()
             fname = node.metadata.get("filename", "")
             context_parts.append(f"[{i + 1}] ({fname})\n{content}")
             sources.append(SourceInfo(

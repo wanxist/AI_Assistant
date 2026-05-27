@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     ssl_verify: bool = True
     ssl_cert_bundle: str = ""
 
+    # Retrieval
+    retrieval_coarse_k: int = 20
+    retrieval_fine_k: int = 5
+    retrieval_short_query_boost: int = 10
+    retrieval_short_query_len: int = 15
+    retrieval_stage1_threshold: float = 0.35  # cosine similarity, triggers Stage 2
+    retrieval_stage2_threshold: float = 0.0  # reranker logits, >0 = relevant
+    retrieval_mode: str = "hybrid"
+
     # App
     app_host: str = "0.0.0.0"
     app_port: int = 8000
