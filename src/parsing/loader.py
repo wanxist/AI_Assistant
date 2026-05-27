@@ -56,6 +56,10 @@ class DocumentLoader:
             from src.parsing.office_parser import OfficeParser
             return OfficeParser()
 
+        if ext == ".txt":
+            from src.parsing.text_parser import TextParser
+            return TextParser()
+
         raise ValueError(f"Unsupported file type: {ext}")
 
     def load(self, file_path: str | Path) -> list[ParsedDocument]:
@@ -98,8 +102,9 @@ class DocumentLoader:
     def guess_need_ocr(self, file_path: str | Path) -> bool:
         """Quick heuristic: does this PDF likely need OCR?
 
-        Opens the first page and checks if any text can be extracted.
-        If PyMuPDF returns empty text, it's likely a scanned image PDF.
+        Opens the first page and checks if any Chinese text can be extracted.
+        Scanned PDFs may have OCR artifacts (scattered numbers/symbols) but no
+        real Chinese sentences — only count CJK characters as meaningful text.
         """
         file_path = Path(file_path)
         if file_path.suffix.lower() != ".pdf":
@@ -110,6 +115,8 @@ class DocumentLoader:
             doc = fitz.open(str(file_path))
             text = doc[0].get_text().strip()
             doc.close()
-            return len(text) < 20
+            # Count CJK characters to distinguish real text from OCR artifacts
+            cjk_chars = sum(1 for c in text if '一' <= c <= '鿿')
+            return cjk_chars < 10
         except Exception:
             return True
