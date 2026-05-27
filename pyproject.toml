@@ -46,6 +46,7 @@ dependencies = [
     "redis[hiredis]>=5.2",
 
     # 基础工具
+    "jieba>=0.42",
     "pydantic>=2.10",
     "pydantic-settings>=2.6",
     "httpx>=0.28",

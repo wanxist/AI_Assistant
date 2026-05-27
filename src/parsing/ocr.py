@@ -1,7 +1,7 @@
 """OCR via PaddleOCR — for scanned PDFs and images."""
 
 import logging
-import os
+import tempfile
 from pathlib import Path
 
 from src.parsing.loader import ParsedDocument
@@ -70,7 +70,7 @@ class OCRParser:
         for page_num in range(len(pdf)):
             page = pdf[page_num]
             pix = page.get_pixmap(dpi=200)
-            img_path = f"/tmp/_ocr_page_{page_num}.png"
+            img_path = f"{tempfile.gettempdir()}/_ocr_page_{page_num}.png"
             pix.save(img_path)
 
             parsed = self._parse_image(img_path, ocr)

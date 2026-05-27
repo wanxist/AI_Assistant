@@ -5,8 +5,9 @@ import logging
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, File, Depends
+from fastapi import APIRouter, Form, Query, UploadFile, File, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 from src.api.deps import get_document_loader, get_pg_connection
 from src.api.schemas import UploadResponse
@@ -18,6 +19,27 @@ from src.parsing.loader import DocumentLoader
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 logger = logging.getLogger(__name__)
+
+
+class CheckRequest(BaseModel):
+    filename: str
+    file_size: int
+
+
+@router.post("/check")
+async def check_duplicate(req: CheckRequest, user: dict = Depends(get_current_user)):
+    """Check if a document with the same name and size already exists."""
+    conn = get_pg_connection()
+    try:
+        row = conn.execute(
+            "SELECT doc_id, filename FROM t_document WHERE filename = %s AND file_size = %s",
+            [req.filename, req.file_size],
+        ).fetchone()
+        if row:
+            return {"exists": True, "doc_id": row[0], "filename": row[1]}
+        return {"exists": False, "doc_id": None, "filename": None}
+    finally:
+        conn.close()
 
 
 @router.post("", response_model=UploadResponse)
@@ -143,8 +165,15 @@ async def upload_document(
 
 
 @router.post("/stream")
-async def upload_stream(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    """SSE streaming upload — reports parsing progress in real-time."""
+async def upload_stream(
+    file: UploadFile = File(...),
+    replace_doc_id: str | None = Query(None),
+    user: dict = Depends(get_current_user),
+):
+    """SSE streaming upload — reports parsing progress in real-time.
+
+    Set replace_doc_id to replace an existing document before re-ingesting.
+    """
 
     content = await file.read()
     file_hash = hashlib.md5(content).hexdigest()
@@ -156,17 +185,23 @@ async def upload_stream(file: UploadFile = File(...), user: dict = Depends(get_c
         import json as _json
         yield f"data: {_json.dumps({'step':'read','msg':'读取文件中...'})}\n\n"
 
-        # Dedup
-        conn = get_pg_connection()
-        try:
-            existing = conn.execute(
-                "SELECT doc_id FROM t_document WHERE md5_hash=%s", [file_hash]
-            ).fetchone()
-        finally:
-            conn.close()
-        if existing:
-            yield f"data: {_json.dumps({'step':'done','msg':'文件已存在，跳过','status':'duplicate'})}\n\n"
-            return
+        # Replace: delete old data first
+        if replace_doc_id:
+            _delete_document(replace_doc_id)
+            yield f"data: {_json.dumps({'step':'read','msg':'已删除旧文档，重新解析中...'})}\n\n"
+
+        # Dedup (skip if replacing)
+        if not replace_doc_id:
+            conn = get_pg_connection()
+            try:
+                existing = conn.execute(
+                    "SELECT doc_id FROM t_document WHERE md5_hash=%s", [file_hash]
+                ).fetchone()
+            finally:
+                conn.close()
+            if existing:
+                yield f"data: {_json.dumps({'step':'done','msg':'文件已存在，跳过','status':'duplicate'})}\n\n"
+                return
 
         # Save to disk
         doc_id = uuid.uuid4().hex[:12]
@@ -231,3 +266,25 @@ async def upload_stream(file: UploadFile = File(...), user: dict = Depends(get_c
         generate(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+def _delete_document(doc_id: str) -> None:
+    """Remove a document from vector store, metadata table, and local filesystem."""
+    conn = get_pg_connection()
+    try:
+        conn.execute(
+            "DELETE FROM data_documents WHERE COALESCE(metadata_->>'source', metadata_->>'doc_id') = %s",
+            [doc_id],
+        )
+        conn.execute("DELETE FROM t_document WHERE doc_id = %s", [doc_id])
+        conn.commit()
+    finally:
+        conn.close()
+
+    docs_dir = Path(settings.data_dir) / "documents"
+    if docs_dir.exists():
+        for f in docs_dir.iterdir():
+            if f.stem == doc_id:
+                f.unlink()
+                logger.info("Deleted local file: %s", f.name)
+                break

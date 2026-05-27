@@ -13,12 +13,22 @@ logger = logging.getLogger(__name__)
 _jieba = None
 
 
+_jieba_unavailable = False
+
+
 def _get_jieba():
-    global _jieba
-    if _jieba is None:
-        import jieba
-        jieba.setLogLevel(logging.WARNING)
-        _jieba = jieba
+    global _jieba, _jieba_unavailable
+    if _jieba is None and not _jieba_unavailable:
+        try:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
+                import jieba
+            jieba.setLogLevel(logging.WARNING)
+            _jieba = jieba
+        except ModuleNotFoundError:
+            _jieba_unavailable = True
+            logger.warning("jieba not installed — Chinese text will not be tokenized for BM25")
     return _jieba
 
 
@@ -31,12 +41,14 @@ def tokenize(text: str) -> str:
     if not text or not _has_cjk(text):
         return text
 
+    jieba = _get_jieba()
+    if jieba is None:
+        return text
     try:
-        jieba = _get_jieba()
         words = jieba.cut(text)
         return " ".join(words)
-    except Exception:
-        logger.warning("jieba tokenization failed, returning original text")
+    except Exception as exc:
+        logger.warning("jieba tokenization error: %s", exc)
         return text
 
 
