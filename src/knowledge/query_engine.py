@@ -7,6 +7,7 @@ Orchestrates the full RAG flow:
 4. Return answer with source citations
 """
 
+import hashlib
 import json
 import logging
 from functools import lru_cache
@@ -14,6 +15,7 @@ from functools import lru_cache
 from src.config import settings
 from src.llm.router import get_llm
 from src.api.schemas import SourceInfo
+from src.storage.cache import get_memory_cache  # 进程内缓存，相同问题5分钟内直接返回
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,11 @@ class QueryEngine:
 
     def __init__(self, retriever=None):
         self._retriever = retriever
+
+    @staticmethod
+    def _cache_key(question: str, top_k: int) -> str:
+        """根据问题内容生成缓存键（MD5哈希+top_k），确保相同问题命中同一缓存"""
+        return f"rag:{hashlib.md5(question.encode()).hexdigest()}:{top_k}"
 
     @property
     def retriever(self):
@@ -103,6 +110,15 @@ class QueryEngine:
 
     def query(self, question: str, top_k: int = 5) -> dict:
         """Answer a question using RAG — returns the complete answer at once."""
+        # ── 缓存查询 ──────────────────────────────────────
+        # 相同问题 5 分钟内直接返回缓存结果，避免重复调用 LLM
+        cache = get_memory_cache()
+        key = self._cache_key(question, top_k)
+        cached = cache.get(key)
+        if cached is not None:
+            logger.debug("RAG 缓存命中: '%s'", question[:60])
+            return cached
+
         result = self._retrieve(question, top_k)
         if result is None:
             return {"answer": _VECTOR_STORE_DOWN_MSG, "sources": []}
@@ -116,8 +132,12 @@ class QueryEngine:
             temperature=0.0,
             max_tokens=1024,
         )
-        logger.info("RAG query: '%s' → %d sources, answer=%d chars", question, len(result["sources"]), len(answer))
-        return {"answer": answer, "sources": result["sources"]}
+        response = {"answer": answer, "sources": result["sources"]}
+        # ── 写入缓存 ──────────────────────────────────────
+        # TTL=300 秒（5分钟），之后重新检索生成
+        cache.set(key, response, ttl=300)
+        logger.info("RAG 查询: '%s' → %d 条来源, 回答 %d 字", question, len(result["sources"]), len(answer))
+        return response
 
     # ------------------------------------------------------------------
     # streaming query
