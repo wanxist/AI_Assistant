@@ -52,6 +52,8 @@ def _check_pgvector() -> bool:
 def _create_pgvector_store() -> Any:
     from llama_index.vector_stores.postgres import PGVectorStore
 
+    # PGVectorStore 是 llama-index 对 pgvector 的封装，
+    # 自动管理 data_documents 表的创建和向量增删查
     store = PGVectorStore(
         connection_string=settings.pg_dsn,
         async_connection_string=settings.pg_async_dsn,
@@ -66,10 +68,15 @@ def _create_pgvector_store() -> Any:
 
 
 def _init_pgvector_schema() -> None:
-    """Ensure pgvector extension is available.
+    """Ensure pgvector extension is available and create ivfflat index.
 
     Table creation is handled automatically by PGVectorStore's _initialize()
     method (creates table named 'data_<table_name>').
+
+    The ivfflat index accelerates similarity search — without it, every query
+    does a full table scan (O(n)). With the index, it drops to O(log n).
+    - lists=100 is fine for up to ~1M rows; increase to ~sqrt(n) as data grows.
+    - vector_cosine_ops matches the cosine distance metric used by Zhipu embedding.
     """
     try:
         import psycopg
@@ -82,11 +89,28 @@ def _init_pgvector_schema() -> None:
             connect_timeout=5,
         )
         conn.autocommit = True
+        # 启用 pgvector 扩展：提供 vector 数据类型、余弦距离等向量运算
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+
+        # ── ivfflat 近似最近邻搜索索引 ─────────────────────
+        # 不加索引时每次向量检索要全表扫描 O(n)，数据越多越慢。
+        # ivfflat 将向量空间划分为 lists 个簇，只搜索最近的几个簇，
+        # 时间复杂度降至 O(log n)，万级以上数据提速 10~100 倍。
+        #
+        # vector_cosine_ops：余弦相似度算子，与智谱 embedding-3 的
+        # 距离度量（cosine distance）一致，确保索引被正确使用。
+        #
+        # lists=100：质心数量，推荐 ≈ sqrt(n)。100 适合百万级以内数据。
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_data_documents_embedding
+            ON data_documents
+            USING ivfflat (embedding vector_cosine_ops)
+            WITH (lists = 100)
+        """)
         conn.close()
-        logger.info("pgvector extension ensured")
+        logger.info("pgvector extension + ivfflat index ensured")
     except Exception as exc:
-        logger.warning("Failed to init pgvector extension: %s", exc)
+        logger.warning("Failed to init pgvector schema/index: %s", exc)
 
 
 def _create_chroma_store() -> Any:

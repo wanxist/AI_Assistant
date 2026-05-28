@@ -10,6 +10,7 @@ import logging
 import time
 from functools import lru_cache
 from typing import Any
+import threading as _threading
 
 from src.config import settings
 
@@ -190,6 +191,105 @@ class RateLimiter:
             return max(0, self.max_requests - count)
         except Exception:
             return self.max_requests
+
+
+# ── 进程内内存缓存（无需 Redis 的替代方案） ──────────────
+# 适用于单进程部署场景，效果与 Redis 缓存基本一致。
+# 与 Redis 的区别：重启后数据丢失、无法在多进程间共享。
+# 但零依赖、零配置，对当前场景完全够用。
+
+
+class MemoryCache:
+    """进程级 TTL 缓存。无需 Redis，使用 Python 字典存储。
+    
+    线程安全（通过锁），过期键在读取时惰性删除，
+    后台守护线程每 10 分钟批量清理一次。
+    用于缓存 embedding 结果和 RAG 查询响应。
+
+    Process-level TTL cache. No Redis needed — uses in-memory dict.
+
+    Thread-safe via lock. Expired entries are cleaned up lazily on read
+    and periodically via a background daemon thread.
+    Useful for caching embedding results and RAG query responses.
+
+    Usage:
+        cache = MemoryCache(default_ttl=300)
+        cache.set("my_key", {"data": 123})
+        value = cache.get("my_key")
+    """
+
+    def __init__(self, default_ttl: int = 300):
+        self._store: dict[str, dict] = {}  # 存储字典：key → {value, expires}
+        self._ttl = default_ttl             # 默认过期时间（秒）
+        self._lock = _threading.Lock()      # 线程锁，保证并发安全
+        # 启动后台清理线程（daemon=True，主进程退出时自动结束）
+        # Background cleanup every 10 minutes
+        cleaner = _threading.Thread(target=self._cleanup_loop, daemon=True)
+        cleaner.start()
+
+    def get(self, key: str):
+        """获取缓存值，不存在或已过期返回 None"""
+        """Get a cached value, or None if missing/expired."""
+        with self._lock:
+            item = self._store.get(key)
+            if item is None:
+                return None
+            if item["expires"] > _time():
+                return item["value"]
+            # 已过期 — 惰性删除
+            # Expired — remove lazily
+            self._store.pop(key, None)
+            return None
+
+    def set(self, key: str, value, ttl: int | None = None):
+        """设置缓存值，可单独指定过期时间（秒），默认 300 秒"""
+        """Set a cached value with optional TTL override (seconds)."""
+        with self._lock:
+            self._store[key] = {
+                "value": value,
+                "expires": _time() + (ttl if ttl is not None else self._ttl),
+            }
+
+    def delete(self, key: str):
+        """删除指定键"""
+        """Remove a key from the cache."""
+        with self._lock:
+            self._store.pop(key, None)
+
+    def clear(self):
+        """清空所有缓存"""
+        """Clear all cached entries."""
+        with self._lock:
+            self._store.clear()
+
+    def _cleanup_loop(self):
+        """后台线程：每 10 分钟清理一次过期条目"""
+        """Background thread: periodically purge expired entries."""
+        import time as _time_mod
+        while True:
+            _time_mod.sleep(600)  # every 10 minutes
+            now = _time()
+            with self._lock:
+                expired = [k for k, v in self._store.items() if v["expires"] <= now]
+                for k in expired:
+                    self._store.pop(k, None)
+                if expired:
+                    logger.debug("MemoryCache: 已清理 %d 条过期缓存", len(expired))
+
+
+# 在后台线程启动前定义 time.time 别名，确保模块可导入
+# We reference time.time via a local name so the module is importable
+# before the background thread starts.
+_time = time.time
+
+
+@lru_cache(maxsize=1)
+def get_memory_cache() -> MemoryCache:
+    """获取全局单例 MemoryCache 实例（默认 TTL=300秒/5分钟）
+    
+    Singleton in-memory cache instance (default TTL=300s/5min).
+    """
+    return MemoryCache(default_ttl=300)
 
 
 @lru_cache(maxsize=1)
