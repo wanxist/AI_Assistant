@@ -62,19 +62,55 @@
 
 ### P2 — 参数可配置化
 
-- [ ] 将以下硬编码常量移到 `src/config.py` 的 `Settings` 类：
-  - `COARSE_TOP_K = 20` (`retrieval.py:15`)
-  - `FINE_TOP_K = 5` (`retrieval.py:16`)
-  - 分数阈值 `0.35` (`query_engine.py:85,95`)
-  - `CHUNK_SIZE = 512` (`ingestion.py:12`)
-  - `CHUNK_OVERLAP = 50` (`ingestion.py:13`)
-  - snippet 截断 `300` (`query_engine.py:111`)
+- [x] `COARSE_TOP_K = 20` → `config.py:retrieval_coarse_k`（已存在）
+- [x] `FINE_TOP_K = 5` → `config.py:retrieval_fine_k`（已存在）
+- [x] 分数阈值 `0.35` → `config.py:retrieval_stage1/2_threshold`（已存在）
+- [x] `CHUNK_SIZE / CHUNK_OVERLAP` — 已随 SentenceSplitter 移除
+- [x] `rerank_min_score` → `config.py:rerank_min_score`（本次新增）
+- [x] `rerank_enabled` → `config.py:rerank_enabled`（本次新增）
+- [ ] snippet 截断 `300` (`query_engine.py:111`) — 待配置化
 
 ### P3 — 体验和可观测性
 
 - [ ] **HyDE 失败静默降级** — `query_engine.py:128` 的 `except Exception: return None` 不打印任何日志，加 `logger.warning`
 - [ ] **RAG 无流式输出** — `/query` 同步返回完整答案，长答案体验差。增加 `/query/stream`
 - [ ] **低分/拒答无追踪** — score ≤ 0.35 的查询不记录，无法分析知识库覆盖缺口。写入日志或数据库
+
+---
+
+---
+
+## 2026-05-28 优化改动
+
+### P0-3: O(n²) node 匹配 → O(1) 字典查找
+
+**文件**: `src/knowledge/retrieval.py:118-130`
+
+- `text_to_nodes` 从 `{text: node}` 单节点字典改为 `defaultdict(list)`，支持重复文本
+- 重排后遍历时 O(1) 查找 + `pop(0)` 消费，避免重复匹配同一节点
+- 之前 bug: `enumerate` + `break` 虽避免了覆盖，但外层再套一层导致 O(n²)
+
+### P0-4: reranker 增加 min_score 过滤 + 异常保护 + 分数归一化
+
+**文件**: `src/knowledge/reranker.py:45-97`
+
+- 新增 `min_score` 参数，对归一化后的分数做截断（至少保留 1 条结果）
+- 新增 `try/except` 保护 `FlagReranker.compute_score()`，OOM 等异常时降级返回原始顺序
+- 新增 min-max 归一化：`(score - min) / (max - min)`，使分数落在 [0, 1] 区间，便于跨查询统一阈值
+
+### P0-5: 可配置 rerank 参数
+
+**文件**: `src/config.py:68-69`
+
+- `rerank_min_score: float = 0.1` — 精排最小分数阈值（归一化后）
+- `rerank_enabled: bool = True` — 开关，关闭时 `retrieve_with_rerank()` 直接返回粗排结果
+
+### P0-6: 新增 reranker 单元测试
+
+**文件**: `tests/test_knowledge/test_reranker.py`（新建）
+
+- 9 个测试用例，mock `FlagReranker`，无需下载模型（~1.3 GB）
+- 覆盖：空候选、排序、top_k、归一化、min_score 过滤、异常降级
 
 ---
 
@@ -99,6 +135,13 @@
 ## 已改动的文件
 
 ```
+2026-05-28 改动:
+src/knowledge/reranker.py     ← min_score 过滤 + 异常保护 + 分数归一化
+src/knowledge/retrieval.py    ← O(n²)→O(1) node匹配 + rerank_enabled 开关
+src/config.py                 ← 新增 rerank_min_score, rerank_enabled
+tests/test_knowledge/test_reranker.py ← 新建，9个单元测试
+docs/RAG优化清单.md           ← 本次优化记录
+
 2026-05-27 改动:
 src/knowledge/ingestion.py    ← 去除双重分块 + 原文保留到 original_text
 src/knowledge/query_engine.py ← LLM上下文使用 original_text

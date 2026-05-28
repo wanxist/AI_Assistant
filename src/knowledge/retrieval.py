@@ -111,18 +111,32 @@ class HybridRetriever:
             return []
 
         # Stage 2: rerank on original text
-        reranker = get_reranker()
-        candidates = [_get_original_text(n) for n in coarse_nodes]
-        ranked = reranker.rerank(query, candidates, top_k=self.fine_k)
+        if settings.rerank_enabled:
+            reranker = get_reranker()
+            candidates = [_get_original_text(n) for n in coarse_nodes]
+            ranked = reranker.rerank(query, candidates, top_k=self.fine_k, min_score=settings.rerank_min_score)
+        else:
+            ranked = [(None, 0.0)] * min(self.fine_k, len(coarse_nodes))
 
-        # Index-based lookup to avoid losing nodes with identical text
+        # O(1) node lookup via text→[nodes] mapping, handles duplicate text
+        from collections import defaultdict
+        text_to_nodes: dict[str, list] = defaultdict(list)
+        for node in coarse_nodes:
+            text_to_nodes[_get_original_text(node)].append(node)
+
         reranked_nodes = []
         for text, score in ranked:
-            for i, node in enumerate(coarse_nodes):
-                if _get_original_text(node) == text:
-                    object.__setattr__(node, 'score', score)
-                    reranked_nodes.append(node)
-                    break
+            if text is None:
+                # reranker disabled: use coarse node directly
+                node = coarse_nodes[len(reranked_nodes)]
+                object.__setattr__(node, 'score', 0.0)
+                reranked_nodes.append(node)
+                continue
+            nodes = text_to_nodes.get(text)
+            if nodes:
+                node = nodes.pop(0)
+                object.__setattr__(node, 'score', score)
+                reranked_nodes.append(node)
 
         logger.debug("Reranker: %d → %d nodes", len(coarse_nodes), len(reranked_nodes))
         return reranked_nodes
