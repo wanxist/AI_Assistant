@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     chat_summarize_trigger: int = 200
     chat_summarize_keep_recent: int = 20
 
+    # JWT
+    jwt_secret: str = "change-me-in-production-must-be-32-chars!"
+
     # App
     app_host: str = "0.0.0.0"
     app_port: int = 8000

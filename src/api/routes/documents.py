@@ -43,6 +43,7 @@ async def get_document(doc_id: str, user: dict = Depends(get_current_user)):
 
 
 def _query_pg_documents() -> list[DocumentInfo] | None:
+    conn = None
     try:
         conn = get_pg_connection()
         rows = conn.execute("""
@@ -64,51 +65,56 @@ def _query_pg_documents() -> list[DocumentInfo] | None:
                      td.chunks_count, td.file_size, td.uploaded_at, td.pages, td.summary
             ORDER BY td.uploaded_at DESC
         """).fetchall()
-        conn.close()
-
-        docs = []
-        for r in rows:
-            doc_id = r[0] or ""
-            filename = r[1] or "unknown"
-            ext = r[2] or Path(filename).suffix
-            parser = r[3] or "unknown"
-            chunks = r[4] or 0
-            size_raw = r[5]
-            uploaded_raw = r[6]
-            pages = r[7]
-            summary = r[8] or ""
-
-            if chunks > 0:
-                status = "indexed"
-            elif parser and parser != "unknown":
-                status = "parse_failed"
-            else:
-                status = "no_text"
-
-            docs.append(DocumentInfo(
-                doc_id=doc_id, filename=filename, file_type=ext,
-                status=status, parser_used=parser,
-                chunks_count=chunks, file_size=_fmt_size(size_raw) if size_raw else "",
-                pages=pages, uploaded_at=uploaded_raw.isoformat() if uploaded_raw else "",
-                summary=summary[:300],
-            ))
-        return docs
     except Exception as exc:
         logger.warning("_query_pg_documents failed: %s", exc)
         return None
+    finally:
+        if conn:
+            conn.close()
+
+    docs = []
+    for r in rows:
+        doc_id = r[0] or ""
+        filename = r[1] or "unknown"
+        ext = r[2] or Path(filename).suffix
+        parser = r[3] or "unknown"
+        chunks = r[4] or 0
+        size_raw = r[5]
+        uploaded_raw = r[6]
+        pages = r[7]
+        summary = r[8] or ""
+
+        if chunks > 0:
+            status = "indexed"
+        elif parser and parser != "unknown":
+            status = "parse_failed"
+        else:
+            status = "no_text"
+
+        docs.append(DocumentInfo(
+            doc_id=doc_id, filename=filename, file_type=ext,
+            status=status, parser_used=parser,
+            chunks_count=chunks, file_size=_fmt_size(size_raw) if size_raw else "",
+            pages=pages, uploaded_at=uploaded_raw.isoformat() if uploaded_raw else "",
+            summary=summary[:300],
+        ))
+    return docs
 
 
 def _get_chunks(doc_id: str) -> list[str]:
+    conn = None
     try:
         conn = get_pg_connection()
         rows = conn.execute(
             "SELECT text FROM data_documents WHERE COALESCE(metadata_->>'source', metadata_->>'doc_id')=%s ORDER BY id",
             [doc_id],
         ).fetchall()
-        conn.close()
         return [r[0][:500] for r in rows]
     except Exception:
         return []
+    finally:
+        if conn:
+            conn.close()
 
 
 def _fmt_size(size_bytes: int) -> str:

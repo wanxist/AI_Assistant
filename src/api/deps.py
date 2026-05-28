@@ -50,20 +50,19 @@ def _get_pool() -> ConnectionPool:
 def get_pg_connection():
     """从连接池获取一个连接 — 调用 .close() 归还到池
     
-    使用 with 语句安全获取连接，返回后通过 close() 归还。
+    使用 pool.getconn() 直接获取 PoolConnection，避免调用
+    pool.connection() 的 @contextmanager 导致生成器挂起的问题。
+    调用 conn.close() 自动归还连接到池。
     如果连接已关闭（被数据库回收或超时），自动重试一次。
     """
     pool = _get_pool()
-    # 使用 with 语句确保连接被正确管理，
-    # __enter__() 获取底层连接，close() 时归还到池
-    conn = pool.connection().__enter__()
-    # 健康检查：如果连接已意外关闭，重新获取
+    conn = pool.getconn()
     try:
         conn.execute("SELECT 1")
     except Exception:
         logger.warning("连接已关闭，重新获取")
         conn.close()
-        conn = pool.connection().__enter__()
+        conn = pool.getconn()
     return conn
 
 
