@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     rerank_min_score: float = 0.1  # min-max normalized, filters low-confidence results
     rerank_enabled: bool = True  # toggle reranker on/off
 
+    # Chunking
+    chunk_strategy: str = "sentence"  # fixed_size / sentence / markdown_header / recursive
+    chunk_size: int = 1024
+    chunk_overlap: int = 100
+
     # Chat context
     chat_max_rounds: int = 30
     chat_context_tokens: int = 8000

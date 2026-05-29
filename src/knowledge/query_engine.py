@@ -121,9 +121,13 @@ class QueryEngine:
 
         result = self._retrieve(question, top_k)
         if result is None:
-            return {"answer": _VECTOR_STORE_DOWN_MSG, "sources": []}
+            response = {"answer": _VECTOR_STORE_DOWN_MSG, "sources": []}
+            cache.set(key, response, ttl=60)  # 缓存1分钟，避免重复检索
+            return response
         if not result["nodes"]:
-            return {"answer": "知识库中没有找到相关信息。请先上传相关文档。", "sources": []}
+            response = {"answer": "知识库中没有找到相关信息。请先上传相关文档。", "sources": []}
+            cache.set(key, response, ttl=60)  # 缓存1分钟，避免重复检索
+            return response
 
         prompt = self._build_prompt(question, result["context"])
         llm = get_llm()
