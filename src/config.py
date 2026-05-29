@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     retrieval_stage1_threshold: float = 0.35  # cosine similarity, triggers Stage 2
     retrieval_stage2_threshold: float = 0.0  # reranker logits, >0 = relevant
     retrieval_mode: str = "hybrid"
+    rerank_min_score: float = 0.1  # min-max normalized, filters low-confidence results
+    rerank_enabled: bool = True  # toggle reranker on/off
 
     # Chat context
     chat_max_rounds: int = 30
