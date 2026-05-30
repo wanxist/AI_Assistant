@@ -14,7 +14,7 @@ from src.config import settings
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
 
-JWT_SECRET = getattr(settings, 'jwt_secret', 'change-me-in-production')
+JWT_SECRET = settings.jwt_secret
 JWT_EXPIRE_HOURS = 24
 
 
@@ -98,9 +98,9 @@ async def login(req: LoginRequest):
     return AuthResponse(token=token, user_id=row[0], username=row[1], display_name=row[3] or row[1])
 
 
-def get_current_user(authorization: str = Header(...)) -> dict:
+def get_current_user(authorization: str | None = Header(None)) -> dict:
     """Dependency: extract user from JWT Bearer token."""
-    if not authorization.startswith("Bearer "):
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "未提供有效的认证令牌")
     try:
         payload = decode_jwt(authorization[7:])

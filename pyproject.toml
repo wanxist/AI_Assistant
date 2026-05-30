@@ -45,6 +45,13 @@ dependencies = [
     # 会话 & 缓存
     "redis[hiredis]>=5.2",
 
+    # JWT 认证
+    "pyjwt>=2.13",
+    "bcrypt>=4.2",
+
+    # 连接池
+    "psycopg-pool>=3.2",
+
     # 基础工具
     "jieba>=0.42",
     "pydantic>=2.10",

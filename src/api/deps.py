@@ -37,34 +37,37 @@ def _get_pool() -> ConnectionPool:
         )
         _pool = ConnectionPool(
             conninfo=dsn,
-            min_size=2,    # 最少保持 2 个空闲连接
-            max_size=10,   # 最大 10 个并发连接
-            timeout=5,     # 等待连接的超时秒数
-            open=False,    # 先创建对象，首次使用时再真正打开（惰性加载）
+            min_size=2,      # 最少保持 2 个空闲连接
+            max_size=20,     # 最大 20 个并发连接（原10，因连接泄漏可能耗尽）
+            timeout=10,      # 等待连接的超时秒数（原5）
+            max_lifetime=300,  # 连接最多存活 5 分钟后回收，防止泄漏堆积
+            open=False,      # 先创建对象，首次使用时再真正打开（惰性加载）
         )
         _pool.open()
-        logger.info("Connection pool created (min=2, max=10)")
+        logger.info("Connection pool created (min=2, max=20)")
     return _pool
 
 
 def get_pg_connection():
     """从连接池获取一个连接 — 调用 .close() 归还到池
     
-    使用 with 语句安全获取连接，返回后通过 close() 归还。
-    如果连接已关闭（被数据库回收或超时），自动重试一次。
+    使用 pool.getconn() 直接获取 PoolConnection，调用 conn.close()
+    自动归还。重试逻辑由 psycopg_pool 内部处理，这里不做额外健康检查
+    以避免重复 getconn/close 导致的竞争条件。
     """
     pool = _get_pool()
-    # 使用 with 语句确保连接被正确管理，
-    # __enter__() 获取底层连接，close() 时归还到池
-    conn = pool.connection().__enter__()
-    # 健康检查：如果连接已意外关闭，重新获取
-    try:
-        conn.execute("SELECT 1")
-    except Exception:
-        logger.warning("连接已关闭，重新获取")
-        conn.close()
-        conn = pool.connection().__enter__()
-    return conn
+    return pool.getconn()
+
+
+def pool_stats() -> dict:
+    """返回连接池当前状态（用于调试）"""
+    pool = _get_pool()
+    return {
+        "min": pool.min_size,
+        "max": pool.max_size,
+        "free": len(pool._pool) if hasattr(pool, "_pool") else -1,
+        "requests_waiting": pool._nrequests if hasattr(pool, "_nrequests") else -1,
+    }
 
 
 # ── Other shared dependencies ────────────────────────────────

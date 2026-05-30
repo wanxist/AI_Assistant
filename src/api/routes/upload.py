@@ -47,6 +47,7 @@ async def upload_document(
     file: UploadFile = File(...),
     loader: DocumentLoader = Depends(get_document_loader),
     user: dict = Depends(get_current_user),
+    strategy: str | None = Query(None, description="切片策略: fixed_size / sentence / markdown_header / recursive"),
 ):
     content = await file.read()
     file_hash = hashlib.md5(content).hexdigest()
@@ -95,7 +96,11 @@ async def upload_document(
         parse_error = str(exc)
 
     if parsed:
-        chunker = Chunker(strategy="sentence", chunk_size=1024, chunk_overlap=100)
+        chunker = Chunker(
+            strategy=strategy or settings.chunk_strategy,
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
+        )
         chunks = chunker.chunk(parsed)
         parser_used = parsed[0].parser_used
         page_count = len(parsed)
@@ -169,6 +174,7 @@ async def upload_stream(
     file: UploadFile = File(...),
     replace_doc_id: str | None = Query(None),
     user: dict = Depends(get_current_user),
+    strategy: str | None = Query(None, description="切片策略: fixed_size / sentence / markdown_header / recursive"),
 ):
     """SSE streaming upload — reports parsing progress in real-time.
 
@@ -227,7 +233,11 @@ async def upload_stream(
 
         if parsed:
             yield f"data: {_json.dumps({'step':'chunk','msg':f'解析完成，正在分块...','pages':len(parsed)})}\n\n"
-            chunker = Chunker()
+            chunker = Chunker(
+                strategy=strategy or settings.chunk_strategy,
+                chunk_size=settings.chunk_size,
+                chunk_overlap=settings.chunk_overlap,
+            )
             chunks = chunker.chunk(parsed)
             parser_used = parsed[0].parser_used
             page_count = len(parsed)

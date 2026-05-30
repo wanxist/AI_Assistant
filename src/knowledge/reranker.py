@@ -47,6 +47,7 @@ class Reranker:
         query: str,
         candidates: list[str],
         top_k: int = 5,
+        min_score: float | None = None,
     ) -> list[tuple[str, float]]:
         """Re-rank candidates by relevance to query.
 
@@ -54,6 +55,8 @@ class Reranker:
             query: The search query.
             candidates: List of candidate text strings.
             top_k: Max number of results to return.
+            min_score: Minimum relevance score threshold.
+                       Results below this are filtered out (at least 1 kept).
 
         Returns:
             List of (text, score) sorted by descending score.
@@ -61,9 +64,13 @@ class Reranker:
         if not candidates:
             return []
 
-        model = self._ensure_model()
-        pairs = [[query, c] for c in candidates]
-        scores = model.compute_score(pairs)
+        try:
+            model = self._ensure_model()
+            pairs = [[query, c] for c in candidates]
+            scores = model.compute_score(pairs)
+        except Exception:
+            logger.exception("Reranker inference failed, falling back to raw order")
+            return list(zip(candidates, [0.0] * len(candidates)))[:top_k]
 
         if isinstance(scores, float):
             scores = [scores]
@@ -73,6 +80,20 @@ class Reranker:
             key=lambda x: x[1],
             reverse=True,
         )
+
+        # Score normalization: min-max to [0, 1]
+        if ranked and ranked[0][1] != ranked[-1][1]:
+            min_s = ranked[-1][1]
+            max_s = ranked[0][1]
+            ranked = [(t, (s - min_s) / (max_s - min_s)) for t, s in ranked]
+
+        if min_score:
+            kept = []
+            for item in ranked:
+                if item[1] >= min_score or not kept:
+                    kept.append(item)
+            ranked = kept
+
         return ranked[:top_k]
 
 
