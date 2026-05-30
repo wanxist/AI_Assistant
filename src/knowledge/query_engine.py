@@ -78,8 +78,6 @@ class QueryEngine:
                     return {"nodes": [], "sources": [], "context": ""}
 
         top_nodes = nodes[:top_k]
-        if top_nodes and (getattr(top_nodes[0], "score", 0) or 0) <= settings.retrieval_stage2_threshold:
-            return {"nodes": [], "sources": [], "context": ""}
 
         context_parts = []
         sources = []

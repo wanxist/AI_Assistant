@@ -63,9 +63,9 @@ class Settings(BaseSettings):
     retrieval_short_query_boost: int = 10
     retrieval_short_query_len: int = 15
     retrieval_stage1_threshold: float = 0.35  # cosine similarity, triggers Stage 2
-    retrieval_stage2_threshold: float = 0.0  # reranker logits, >0 = relevant
+    retrieval_stage2_threshold: float = 0.0  # deprecated — filtering moved into reranker
     retrieval_mode: str = "hybrid"
-    rerank_min_score: float = 0.1  # min-max normalized, filters low-confidence results
+    rerank_min_score: float = 0.0  # raw logit threshold (BGE: >0 = relevant), applied pre-normalization
     rerank_enabled: bool = True  # toggle reranker on/off
 
     # Chunking
