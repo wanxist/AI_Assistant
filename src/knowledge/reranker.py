@@ -1,7 +1,7 @@
-"""RAG reranker via bge-reranker-large — improves retrieval precision.
+"""RAG reranker via bge-reranker-v2-m3 — improves retrieval precision.
 
-Loads BAAI/bge-reranker-large locally (free, no API needed).
-Call `download_models.py` first to cache the model.
+Loads BAAI/bge-reranker-v2-m3 locally (free, no API needed).
+Download from ModelScope: modelscope download BAAI/bge-reranker-v2-m3
 """
 
 import logging
@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 import os as _os
 _PROJECT_ROOT = __file__.rsplit("src", 1)[0]
-_RERANKER_LOCAL = _os.path.join(_PROJECT_ROOT, "data", "models", "BAAI", "bge-reranker-large")
-_RERANKER_DEFAULT = "BAAI/bge-reranker-large"
+_RERANKER_LOCAL = _os.path.join(_PROJECT_ROOT, "data", "models", "BAAI", "bge-reranker-v2-m3")
+_RERANKER_DEFAULT = "BAAI/bge-reranker-v2-m3"
 _RERANKER_MODEL = _RERANKER_LOCAL if _os.path.isdir(_RERANKER_LOCAL) else _RERANKER_DEFAULT
 
 
@@ -81,18 +81,21 @@ class Reranker:
             reverse=True,
         )
 
-        # Score normalization: min-max to [0, 1]
-        if ranked and ranked[0][1] != ranked[-1][1]:
-            min_s = ranked[-1][1]
-            max_s = ranked[0][1]
-            ranked = [(t, (s - min_s) / (max_s - min_s)) for t, s in ranked]
-
-        if min_score:
+        # Filter on raw logits before normalization so the threshold has a
+        # stable meaning: raw logit > 0 = relevant (BGE cross-encoder).
+        if min_score is not None:
             kept = []
             for item in ranked:
                 if item[1] >= min_score or not kept:
                     kept.append(item)
             ranked = kept
+
+        # Score normalization: min-max to [0, 1] — applied AFTER filtering
+        # so normalized scores represent relative quality within the surviving set.
+        if len(ranked) >= 2 and ranked[0][1] != ranked[-1][1]:
+            min_s = ranked[-1][1]
+            max_s = ranked[0][1]
+            ranked = [(t, (s - min_s) / (max_s - min_s)) for t, s in ranked]
 
         return ranked[:top_k]
 

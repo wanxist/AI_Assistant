@@ -1,11 +1,13 @@
 """Embedding — multi-provider support (Zhipu, Ali, local BGE)."""
 
+import hashlib
 import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, List, Optional
 
 from src.config import settings
+from src.storage.cache import get_memory_cache
 from src.utils.ssl_utils import get_verify_param, get_httpx_client
 
 logger = logging.getLogger(__name__)
@@ -129,7 +131,14 @@ class EmbeddingManager:
         return self._ensure_model().embed(texts_list)
 
     def encode_query(self, query: str) -> list[float]:
-        return self._ensure_model().embed([query])[0]
+        cache = get_memory_cache()
+        key = f"emb:{hashlib.md5(query.encode()).hexdigest()}"
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        emb = self._ensure_model().embed([query])[0]
+        cache.set(key, emb, ttl=3600)
+        return emb
 
 
 @lru_cache(maxsize=1)
